@@ -20,8 +20,8 @@ package raft
 import "sync"
 import "labrpc"
 
-// import "bytes"
-// import "encoding/gob"
+import _ "bytes"
+import _ "encoding/gob"
 
 
 
@@ -98,6 +98,12 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here.
+	//TODO: fill it
+	Term 			int
+	CandidateId 	int
+	LastLogIndes 	int
+	LastLogTerm 	int
+
 }
 
 //
@@ -105,6 +111,9 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here.
+	//TODO: fill it
+	Term 		int
+	VoteGranted bool
 }
 
 //
@@ -182,12 +191,17 @@ func (rf *Raft) Kill() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}
+	rf := &Raft{}   //equals new(Raft)
 	rf.peers = peers
 	rf.persister = persister
-	rf.me = me
-
+	rf.me = me  //index of this server
+	args := &RequestVoteArgs{}
+	reply := &RequestVoteReply{}
+	Raft.sendRequestVote(*rf, me, *args, reply)
 	// Your initialization code here.
+	go func() {
+
+	}()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
