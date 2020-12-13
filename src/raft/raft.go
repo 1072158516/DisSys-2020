@@ -23,8 +23,6 @@ import "labrpc"
 import _ "bytes"
 import _ "encoding/gob"
 
-
-
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -41,10 +39,17 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex
-	peers     []*labrpc.ClientEnd
-	persister *Persister
-	me        int // index into peers[]
+	mu          sync.Mutex
+	peers       []*labrpc.ClientEnd
+	persister   *Persister
+	me          int // index into peers[]
+	currentTerm int
+	votedFor    int
+	log         []byte
+	commitIndex int
+	lastApplied int
+	nextIndex   int
+	matchIndex  int
 
 	// Your data here.
 	// Look at the paper's Figure 2 for a description of what
@@ -90,20 +95,16 @@ func (rf *Raft) readPersist(data []byte) {
 	// d.Decode(&rf.yyy)
 }
 
-
-
-
 //
 // example RequestVote RPC arguments structure.
 //
 type RequestVoteArgs struct {
 	// Your data here.
 	//TODO: fill it
-	Term 			int
-	CandidateId 	int
-	LastLogIndes 	int
-	LastLogTerm 	int
-
+	Term         int
+	CandidateId  int
+	LastLogIndes int
+	LastLogTerm  int
 }
 
 //
@@ -112,7 +113,7 @@ type RequestVoteArgs struct {
 type RequestVoteReply struct {
 	// Your data here.
 	//TODO: fill it
-	Term 		int
+	Term        int
 	VoteGranted bool
 }
 
@@ -121,6 +122,9 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
+	//print(rf.GetState())
+	rf.GetState()
+	//print(args.Term)
 }
 
 //
@@ -141,10 +145,10 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	//println("ffff")
+	ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
 	return ok
 }
-
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -163,7 +167,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
 	isLeader := true
-
 
 	return index, term, isLeader
 }
@@ -191,21 +194,35 @@ func (rf *Raft) Kill() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	rf := &Raft{}   //equals new(Raft)
+	rf := &Raft{} //equals new(Raft)
 	rf.peers = peers
 	rf.persister = persister
-	rf.me = me  //index of this server
-	args := &RequestVoteArgs{}
-	reply := &RequestVoteReply{}
-	Raft.sendRequestVote(*rf, me, *args, reply)
+
+	rf.me = me //index of this server
+	//println(me)   //0,1,2 have three server and the make is to every one
+	//print(len(peers))
 	// Your initialization code here.
 	go func() {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		args := &RequestVoteArgs{}
+		reply := &RequestVoteReply{}
+		args.Term = 0
+		args.CandidateId = 0
+		for i := range rf.peers {
+			var count int = 0
+			if rf.sendRequestVote(i, *args, reply) {
+				count++
+			}
+			if count > 1 {
+				print("i'm leader")
+			}
+		}
 
 	}()
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
 
 	return rf
 }
