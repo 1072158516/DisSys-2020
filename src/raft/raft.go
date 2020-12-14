@@ -18,7 +18,8 @@ package raft
 //
 
 import (
-	"strconv"
+	"bytes"
+	"encoding/gob"
 	"sync"
 	"time"
 )
@@ -49,6 +50,7 @@ type Raft struct {
 	me          int // index into peers[]
 	currentTerm int
 	votedFor    int
+	getvoteCnt  int
 	log         []byte
 	commitIndex int
 	lastApplied int
@@ -67,9 +69,15 @@ type Raft struct {
 func (rf *Raft) GetState() (int, bool) {
 
 	var term int
-	var isleader bool
+	term = rf.currentTerm
+	var leader bool
+	leader = false
+	if rf.getvoteCnt > len(rf.peers)/2 {
+		leader = true
+	}
+
 	// Your code here.
-	return term, isleader
+	return term, leader
 }
 
 //
@@ -80,12 +88,17 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here.
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := gob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := gob.NewEncoder(w)
+	_ = e.Encode(rf.currentTerm)
+	_ = e.Encode(rf.votedFor)
+	_ = e.Encode(rf.log)
+	_ = e.Encode(rf.commitIndex)
+	_ = e.Encode(rf.lastApplied)
+	_ = e.Encode(rf.nextIndex)
+	_ = e.Encode(rf.matchIndex)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -108,7 +121,7 @@ type RequestVoteArgs struct {
 	//TODO: fill it
 	Term         int
 	CandidateId  int
-	LastLogIndes int
+	LastLogIndex int
 	LastLogTerm  int
 }
 
@@ -127,11 +140,21 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
-	go func() {
-		rf.ch <- true
-		rf.wg.Done()
-	}()
-	println("vote to " + strconv.Itoa(args.CandidateId))
+
+	rf.ch <- true
+	if args.Term < rf.currentTerm {
+		reply.VoteGranted = false
+	}
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+			reply.VoteGranted = true
+		}
+	}
+
+	defer rf.wg.Done()
+
+	//println("vote to " + strconv.Itoa(args.CandidateId))
 	//print(rf.GetState())
 
 	//rf.GetState()
@@ -156,7 +179,6 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 // the struct itself.
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
-	//println("ffff")
 	ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
 	return ok
 }
@@ -208,11 +230,18 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf := &Raft{} //equals new(Raft)
 	rf.peers = peers
 	rf.persister = persister
-
+	// Your initialization code here.
 	rf.me = me //index of this server
+	rf.currentTerm = 0
+	rf.votedFor = -1
+	rf.getvoteCnt = 0
+	rf.commitIndex = 0
+	rf.lastApplied = 0
+	rf.log = append(rf.log, 1)
+
 	//println(me)   //0,1,2 have three server and the make is to every one
 	//print(len(peers))
-	// Your initialization code here.
+
 	rf.ch = make(chan bool)
 	rf.wg.Add(2)
 	go func() {
@@ -225,15 +254,26 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		select {
 		case <-time.After(time.Millisecond*(100*time.Duration(me+1)) - 1):
 			{
-				rf.wg.Done()
+				defer rf.wg.Done()
 				//println(strconv.Itoa(rf.me) + " request vote")
 				args := &RequestVoteArgs{}
-				reply := &RequestVoteReply{}
-				args.Term = 0
+
+				rf.currentTerm = rf.currentTerm + 1
+				rf.votedFor = me
+				rf.getvoteCnt = 1
+				args.Term = rf.currentTerm
 				args.CandidateId = rf.me
 				for i := range rf.peers {
 					//var count int = 0
+					if i == rf.me {
+						continue
+					}
+					reply := &RequestVoteReply{}
 					if rf.sendRequestVote(i, *args, reply) {
+						if reply.VoteGranted {
+							rf.getvoteCnt = rf.getvoteCnt + 1
+						}
+						//println(reply.VoteGranted)
 					}
 
 				}
@@ -245,7 +285,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 			}
 		}
 		rf.wg.Wait()
-		println("it ends")
+		//println("it ends")
 	}()
 
 	// initialize from state persisted before a crash
