@@ -17,7 +17,11 @@ package raft
 //   in the same server.
 //
 
-import "sync"
+import (
+	"strconv"
+	"sync"
+	"time"
+)
 import "labrpc"
 
 import _ "bytes"
@@ -50,7 +54,8 @@ type Raft struct {
 	lastApplied int
 	nextIndex   int
 	matchIndex  int
-
+	wg          sync.WaitGroup
+	ch          chan bool
 	// Your data here.
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -122,8 +127,14 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
+	go func() {
+		rf.ch <- true
+		rf.wg.Done()
+	}()
+	println("vote to " + strconv.Itoa(args.CandidateId))
 	//print(rf.GetState())
-	rf.GetState()
+
+	//rf.GetState()
 	//print(args.Term)
 }
 
@@ -202,23 +213,39 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//println(me)   //0,1,2 have three server and the make is to every one
 	//print(len(peers))
 	// Your initialization code here.
+	rf.ch = make(chan bool)
+	rf.wg.Add(2)
+	go func() {
+		time.Sleep(time.Millisecond * (100 * time.Duration(me+1)))
+		rf.wg.Done()
+	}()
 	go func() {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		args := &RequestVoteArgs{}
-		reply := &RequestVoteReply{}
-		args.Term = 0
-		args.CandidateId = 0
-		for i := range rf.peers {
-			var count int = 0
-			if rf.sendRequestVote(i, *args, reply) {
-				count++
+		select {
+		case <-time.After(time.Millisecond*(100*time.Duration(me+1)) - 1):
+			{
+				rf.wg.Done()
+				//println(strconv.Itoa(rf.me) + " request vote")
+				args := &RequestVoteArgs{}
+				reply := &RequestVoteReply{}
+				args.Term = 0
+				args.CandidateId = rf.me
+				for i := range rf.peers {
+					//var count int = 0
+					if rf.sendRequestVote(i, *args, reply) {
+					}
+
+				}
 			}
-			if count > 1 {
-				print("i'm leader")
+		case <-rf.ch:
+			{
+				//println(strconv.Itoa(rf.me) +" vote to others")
+				//rf.wg.Done()
 			}
 		}
-
+		rf.wg.Wait()
+		println("it ends")
 	}()
 
 	// initialize from state persisted before a crash
