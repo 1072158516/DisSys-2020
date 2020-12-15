@@ -50,7 +50,7 @@ type Raft struct {
 	me          int // index into peers[]
 	currentTerm int
 	votedFor    int
-	getvoteCnt  int
+	state       int
 	log         []byte
 	commitIndex int
 	lastApplied int
@@ -72,7 +72,7 @@ func (rf *Raft) GetState() (int, bool) {
 	term = rf.currentTerm
 	var leader bool
 	leader = false
-	if rf.getvoteCnt > len(rf.peers)/2 {
+	if rf.state == 2 {
 		leader = true
 	}
 
@@ -152,7 +152,7 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		}
 	}
 
-	defer rf.wg.Done()
+	//defer rf.wg.Done()
 
 	//println("vote to " + strconv.Itoa(args.CandidateId))
 	//print(rf.GetState())
@@ -213,6 +213,69 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) Kill() {
 	// Your code here, if desired.
 }
+func (rf *Raft) Convert(state int) {
+	// Your code here, if desired.
+	if state == rf.state {
+		return
+	}
+	if state == 2 {
+
+		go func() {
+			//TODO: STart Send HEartbeat
+		}()
+	} else if state == 1 {
+		go rf.StartElect()
+		//TODO: STart Election
+
+	} else if state == 0 {
+		//TODO: Start receive HeartBeat
+	}
+
+}
+
+func (rf *Raft) StartElect() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	select {
+	case <-time.After(time.Millisecond*(100*time.Duration(rf.me+1)) - 1):
+		{
+			defer rf.wg.Done()
+			//println(strconv.Itoa(rf.me) + " request vote")
+			args := &RequestVoteArgs{}
+
+			rf.currentTerm = rf.currentTerm + 1
+			rf.votedFor = rf.me
+			var count = 1
+			rf.Convert(1)
+			args.Term = rf.currentTerm
+			args.CandidateId = rf.me
+			for i := range rf.peers {
+				//var count int = 0
+				if i == rf.me {
+					continue
+				}
+				reply := &RequestVoteReply{}
+				if rf.sendRequestVote(i, *args, reply) {
+					if reply.VoteGranted {
+						count++
+					}
+					//println(reply.VoteGranted)
+				}
+
+			}
+			if count > len(rf.peers)/2 {
+				rf.Convert(2)
+			}
+		}
+	case <-rf.ch:
+		{
+			//println(strconv.Itoa(rf.me) +" vote to others")
+			//rf.wg.Done()
+		}
+	}
+	rf.wg.Wait()
+	//println("it ends")
+}
 
 //
 // the service or tester wants to create a Raft server. the ports
@@ -234,7 +297,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me //index of this server
 	rf.currentTerm = 0
 	rf.votedFor = -1
-	rf.getvoteCnt = 0
+	rf.state = 0
 	rf.commitIndex = 0
 	rf.lastApplied = 0
 	rf.log = append(rf.log, 1)
@@ -243,49 +306,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//print(len(peers))
 
 	rf.ch = make(chan bool)
-	rf.wg.Add(2)
+
 	go func() {
 		time.Sleep(time.Millisecond * (100 * time.Duration(me+1)))
-		rf.wg.Done()
-	}()
-	go func() {
-		rf.mu.Lock()
-		defer rf.mu.Unlock()
-		select {
-		case <-time.After(time.Millisecond*(100*time.Duration(me+1)) - 1):
-			{
-				defer rf.wg.Done()
-				//println(strconv.Itoa(rf.me) + " request vote")
-				args := &RequestVoteArgs{}
-
-				rf.currentTerm = rf.currentTerm + 1
-				rf.votedFor = me
-				rf.getvoteCnt = 1
-				args.Term = rf.currentTerm
-				args.CandidateId = rf.me
-				for i := range rf.peers {
-					//var count int = 0
-					if i == rf.me {
-						continue
-					}
-					reply := &RequestVoteReply{}
-					if rf.sendRequestVote(i, *args, reply) {
-						if reply.VoteGranted {
-							rf.getvoteCnt = rf.getvoteCnt + 1
-						}
-						//println(reply.VoteGranted)
-					}
-
-				}
-			}
-		case <-rf.ch:
-			{
-				//println(strconv.Itoa(rf.me) +" vote to others")
-				//rf.wg.Done()
-			}
-		}
-		rf.wg.Wait()
-		//println("it ends")
+		rf.Convert(1)
 	}()
 
 	// initialize from state persisted before a crash
