@@ -251,7 +251,6 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 }
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriseArgs, reply *AppendEntriseReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, &reply)
-	//println(reply.Term)
 	return ok
 }
 
@@ -300,19 +299,22 @@ func (rf *Raft) Convert(state int) {
 	if state == 2 {
 		rf.isgetHeart = false
 		rf.state = 2
+		println(strconv.Itoa(rf.me) + ": im leader")
 		go func() {
 			for rf.state == 2 {
 				args := &AppendEntriseArgs{}
 				args.Term = rf.CurrentTerm
 				args.LeaderId = rf.me
-
+				println(&args)
 				for i := 0; i < len(rf.peers); i++ {
 					if i == rf.me {
 						continue
 					}
 					reply := &AppendEntriseReply{}
-					if rf.sendAppendEntries(i, *args, reply) {
-						//println("my term: " + strconv.Itoa(rf.currentTerm) + " reply term " + strconv.Itoa(reply.Term))
+					reply.Term = -1
+					if rf.sendAppendEntries(i, *args, reply) && reply.Term > 0 {
+						println("my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
+						//println(&reply)
 						if reply.Success {
 							//println("heard reply from " + strconv.Itoa(i))
 						}
@@ -324,6 +326,7 @@ func (rf *Raft) Convert(state int) {
 						}
 
 					}
+
 				}
 				time.Sleep(time.Millisecond * 400)
 			}
@@ -334,6 +337,7 @@ func (rf *Raft) Convert(state int) {
 		rf.CurrentTerm++
 		//println(strconv.Itoa(rf.me) + " Term change to " + strconv.Itoa(rf.CurrentTerm))
 		//rf.votedFor = -1
+		//println("go elect")
 		go rf.StartElect()
 
 	} else if state == 0 {
@@ -350,10 +354,10 @@ func (rf *Raft) Convert(state int) {
 				if timezone-rf.timeUnixHeart > 1000 {
 					//println("election timeout from " + strconv.Itoa(rf.me))
 					rf.votedFor = -1
-					time.Sleep(time.Millisecond * (500*time.Duration(rf.me+1) + 50))
+					time.Sleep(time.Millisecond * (200*time.Duration(rf.me+1) + 50))
 					if rf.votedFor == -1 {
 						rf.Convert(1)
-						//println("start election from " + strconv.Itoa(rf.me))
+						println("start election from " + strconv.Itoa(rf.me))
 					}
 					break
 
@@ -372,25 +376,29 @@ func (rf *Raft) StartElect() {
 	defer rf.mu.Unlock()
 
 	//defer rf.wg.Done()
-	//println(strconv.Itoa(rf.me) + " request vote")
+
 	args := &RequestVoteArgs{}
 
-	rf.votedFor = rf.me
+	//rf.votedFor = rf.me
 	var count = 0
 	var cntmach = 0
 	args.Term = rf.CurrentTerm
 	args.CandidateId = rf.me
+
 	for i := 0; i < len(rf.peers); i++ {
 		//var count int = 0
 		//println(i)
+		//println(strconv.Itoa(rf.me) + " request vote")
 
-		reply := &RequestVoteReply{}
+		reply := new(RequestVoteReply)
+		reply.Term = -1
+		reply.VoteGranted = false
 		if rf.sendRequestVote(i, *args, reply) {
 			cntmach++
-			//println("request vote form" + strconv.Itoa(i))
+			println("request vote form " + strconv.Itoa(i) + " to " + strconv.Itoa(rf.me))
 			if reply.VoteGranted {
 				count++
-				//println("get vote from " + strconv.Itoa(i))
+				println("get vote from " + strconv.Itoa(i))
 			}
 			if reply.Term > rf.CurrentTerm {
 				rf.CurrentTerm = reply.Term
@@ -421,6 +429,7 @@ func (rf *Raft) StartElect() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{} //equals new(Raft)
+	//println(&rf)
 	rf.peers = peers
 	rf.persister = persister
 	// Your initialization code here.
