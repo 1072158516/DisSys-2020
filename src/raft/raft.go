@@ -75,6 +75,7 @@ func (rf *Raft) GetState() (int, bool) {
 	if rf.state == 2 {
 		leader = true
 	}
+	//println(rf.state)
 
 	// Your code here.
 	return term, leader
@@ -118,7 +119,7 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here.
-	//TODO: fill it
+
 	Term         int
 	CandidateId  int
 	LastLogIndex int
@@ -128,12 +129,41 @@ type RequestVoteArgs struct {
 //
 // example RequestVote RPC reply structure.
 //
+
 type RequestVoteReply struct {
 	// Your data here.
-	//TODO: fill it
+
 	Term        int
 	VoteGranted bool
 }
+
+//
+// example Append RPC arguments structure.
+//
+type AppendEntriseArgs struct {
+	// Your data here.
+	//TODO: fill it
+	Term         int
+	leaderId     int
+	prevLogIndex int
+	prevLogTerm  int
+	entries      []byte
+	leaderCommit int
+}
+
+//
+// example Append RPC reply structure.
+//
+type AppendEntriseReply struct {
+	// Your data here.
+	//TODO: fill it
+	Term    int
+	success bool
+}
+
+//
+// example RequestVote RPC reply structure.
+//
 
 //
 // example RequestVote RPC handler.
@@ -141,7 +171,7 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
 
-	rf.ch <- true
+	//rf.ch <- true
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 	}
@@ -149,7 +179,25 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
 			reply.VoteGranted = true
+			rf.votedFor = args.CandidateId
 		}
+		rf.Convert(0)
+	}
+
+	//defer rf.wg.Done()
+
+	//println("vote to " + strconv.Itoa(args.CandidateId))
+	//print(rf.GetState())
+
+	//rf.GetState()
+	//print(args.Term)
+}
+func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply) {
+	// Your code here.
+
+	//rf.ch <- true
+	if args.Term < rf.currentTerm {
+		reply.success = false
 	}
 
 	//defer rf.wg.Done()
@@ -180,6 +228,10 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 //
 func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, &reply)
+	return ok
+}
+func (rf *Raft) sendAppendEntries(server int, args AppendEntriseArgs, reply *AppendEntriseReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, &reply)
 	return ok
 }
 
@@ -219,15 +271,17 @@ func (rf *Raft) Convert(state int) {
 		return
 	}
 	if state == 2 {
-
+		rf.state = 2
 		go func() {
 			//TODO: STart Send HEartbeat
 		}()
 	} else if state == 1 {
+		rf.state = 1
 		go rf.StartElect()
 		//TODO: STart Election
 
 	} else if state == 0 {
+		rf.state = 0
 		//TODO: Start receive HeartBeat
 	}
 
@@ -236,44 +290,36 @@ func (rf *Raft) Convert(state int) {
 func (rf *Raft) StartElect() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	select {
-	case <-time.After(time.Millisecond*(100*time.Duration(rf.me+1)) - 1):
-		{
-			defer rf.wg.Done()
-			//println(strconv.Itoa(rf.me) + " request vote")
-			args := &RequestVoteArgs{}
 
-			rf.currentTerm = rf.currentTerm + 1
-			rf.votedFor = rf.me
-			var count = 1
-			rf.Convert(1)
-			args.Term = rf.currentTerm
-			args.CandidateId = rf.me
-			for i := range rf.peers {
-				//var count int = 0
-				if i == rf.me {
-					continue
-				}
-				reply := &RequestVoteReply{}
-				if rf.sendRequestVote(i, *args, reply) {
-					if reply.VoteGranted {
-						count++
-					}
-					//println(reply.VoteGranted)
-				}
+	//defer rf.wg.Done()
+	//println(strconv.Itoa(rf.me) + " request vote")
+	args := &RequestVoteArgs{}
 
-			}
-			if count > len(rf.peers)/2 {
-				rf.Convert(2)
-			}
+	rf.currentTerm = rf.currentTerm + 1
+	rf.votedFor = rf.me
+	var count = 1
+	rf.Convert(1)
+	args.Term = rf.currentTerm
+	args.CandidateId = rf.me
+	for i := 0; i < len(rf.peers); i++ {
+		//var count int = 0
+		//println(i)
+		if i == rf.me {
+			continue
 		}
-	case <-rf.ch:
-		{
-			//println(strconv.Itoa(rf.me) +" vote to others")
-			//rf.wg.Done()
+		reply := &RequestVoteReply{}
+		if rf.sendRequestVote(i, *args, reply) {
+			if reply.VoteGranted {
+				count++
+				//println("get vote" + strconv.Itoa(i))
+			}
 		}
 	}
-	rf.wg.Wait()
+	if count > len(rf.peers)/2 {
+		rf.Convert(2)
+	}
+
+	//rf.wg.Wait()
 	//println("it ends")
 }
 
@@ -309,7 +355,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	go func() {
 		time.Sleep(time.Millisecond * (100 * time.Duration(me+1)))
-		rf.Convert(1)
+		if rf.votedFor == -1 {
+			rf.Convert(1)
+		}
+
 	}()
 
 	// initialize from state persisted before a crash
