@@ -204,7 +204,10 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 
 	//rf.ch <- true
 	//term, _ := rf.GetState()
-	//println("append: " + strconv.Itoa(args.Term) + " " + strconv.Itoa(rf.me) + " " + strconv.Itoa(rf.CurrentTerm))
+	if rf.me == 0 {
+		println("append: " + strconv.Itoa(args.Term) + " " + strconv.Itoa(rf.me) + " " + strconv.Itoa(rf.CurrentTerm))
+	}
+
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
 		//println("reply term big ")
@@ -250,7 +253,11 @@ func (rf *Raft) sendRequestVote(server int, args RequestVoteArgs, reply *Request
 	return ok
 }
 func (rf *Raft) sendAppendEntries(server int, args AppendEntriseArgs, reply *AppendEntriseReply) bool {
+
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, &reply)
+	//if server == 0{
+	//	println("0 get")
+	//}
 	return ok
 }
 
@@ -286,6 +293,8 @@ func (rf *Raft) Kill() {
 }
 func (rf *Raft) Convert(state int) {
 	// Your code here, if desired.
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 	if state == rf.state {
 		if state != 0 {
 			return
@@ -302,18 +311,23 @@ func (rf *Raft) Convert(state int) {
 		println(strconv.Itoa(rf.me) + ": im leader")
 		go func() {
 			for rf.state == 2 {
+				time.Sleep(time.Millisecond * 400)
 				args := &AppendEntriseArgs{}
 				args.Term = rf.CurrentTerm
 				args.LeaderId = rf.me
-				println(&args)
+
 				for i := 0; i < len(rf.peers); i++ {
 					if i == rf.me {
 						continue
 					}
 					reply := &AppendEntriseReply{}
 					reply.Term = -1
-					if rf.sendAppendEntries(i, *args, reply) && reply.Term > 0 {
-						println("my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
+					cnt := 0
+					//println(reply.Term)
+					if rf.sendAppendEntries(i, *args, reply) {
+						cnt++
+
+						//println("my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
 						//println(&reply)
 						if reply.Success {
 							//println("heard reply from " + strconv.Itoa(i))
@@ -326,9 +340,13 @@ func (rf *Raft) Convert(state int) {
 						}
 
 					}
+					if cnt == 0 {
+						rf.Convert(1)
+						break
+					}
 
 				}
-				time.Sleep(time.Millisecond * 400)
+
 			}
 		}()
 	} else if state == 1 {
@@ -389,26 +407,40 @@ func (rf *Raft) StartElect() {
 		//var count int = 0
 		//println(i)
 		//println(strconv.Itoa(rf.me) + " request vote")
-
+		//if rf.state != 1{
+		//	break
+		//}
 		reply := new(RequestVoteReply)
 		reply.Term = -1
 		reply.VoteGranted = false
-		if rf.sendRequestVote(i, *args, reply) {
-			cntmach++
-			println("request vote form " + strconv.Itoa(i) + " to " + strconv.Itoa(rf.me))
+		//rf.sendRequestVote(i, *args, reply)
+		ok := rf.sendRequestVote(i, *args, reply)
+		{
+			if ok {
+				cntmach++
+			}
+
+			//println("request vote form " + strconv.Itoa(i) + " to " + strconv.Itoa(rf.me))
 			if reply.VoteGranted {
 				count++
-				println("get vote from " + strconv.Itoa(i))
+				//println("get vote from " + strconv.Itoa(i))
 			}
 			if reply.Term > rf.CurrentTerm {
+				//println("convert to 0")
 				rf.CurrentTerm = reply.Term
 				rf.Convert(0)
 				break
 			}
 		}
 	}
-	if count > cntmach/2 {
+	//println(strconv.Itoa(count) + "  " + strconv.Itoa(cntmach))
+	if count > cntmach/2 && cntmach > 1 {
 		rf.Convert(2)
+	} else {
+		//println(strconv.Itoa(rf.me) + "fail to be leader")
+
+		//rf.votedFor = -1
+		rf.Convert(1)
 	}
 
 	//rf.wg.Wait()
@@ -440,12 +472,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = 0
 	rf.commitIndex = 0
 	rf.lastApplied = 0
-	rf.log = append(rf.log, 1)
+	//rf.log = append(rf.log, 1)
 
 	//println(me)   //0,1,2 have three server and the make is to every one
 	//print(len(peers))
-
-	rf.ch = make(chan bool)
 
 	go func() {
 		time.Sleep(time.Millisecond * (100 * time.Duration(me+1)))
