@@ -205,7 +205,7 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 	//rf.ch <- true
 	//term, _ := rf.GetState()
 	if rf.me == 0 {
-		println("append: " + strconv.Itoa(args.Term) + " " + strconv.Itoa(rf.me) + " " + strconv.Itoa(rf.CurrentTerm))
+		//println("append: " + strconv.Itoa(args.Term) + " " + strconv.Itoa(rf.me) + " " + strconv.Itoa(rf.CurrentTerm))
 	}
 
 	if args.Term < rf.CurrentTerm {
@@ -308,7 +308,7 @@ func (rf *Raft) Convert(state int) {
 	if state == 2 {
 		rf.isgetHeart = false
 		rf.state = 2
-		println(strconv.Itoa(rf.me) + ": im leader")
+		//println(strconv.Itoa(rf.me) + ": im leader")
 		go func() {
 			for rf.state == 2 {
 				time.Sleep(time.Millisecond * 400)
@@ -375,7 +375,7 @@ func (rf *Raft) Convert(state int) {
 					time.Sleep(time.Millisecond * (200*time.Duration(rf.me+1) + 50))
 					if rf.votedFor == -1 {
 						rf.Convert(1)
-						println("start election from " + strconv.Itoa(rf.me))
+						//println("start election from " + strconv.Itoa(rf.me))
 					}
 					break
 
@@ -390,8 +390,8 @@ func (rf *Raft) Convert(state int) {
 }
 
 func (rf *Raft) StartElect() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 
 	//defer rf.wg.Done()
 
@@ -402,7 +402,7 @@ func (rf *Raft) StartElect() {
 	var cntmach = 0
 	args.Term = rf.CurrentTerm
 	args.CandidateId = rf.me
-
+	timeout := time.After(500*time.Millisecond)
 	for i := 0; i < len(rf.peers); i++ {
 		//var count int = 0
 		//println(i)
@@ -436,11 +436,20 @@ func (rf *Raft) StartElect() {
 	//println(strconv.Itoa(count) + "  " + strconv.Itoa(cntmach))
 	if count > cntmach/2 && cntmach > 1 {
 		rf.Convert(2)
+		return
 	} else {
-		//println(strconv.Itoa(rf.me) + "fail to be leader")
-
+		//println(strconv.Itoa(rf.me) + "fail to be leader and now leader is" + strconv.Itoa(rf.votedFor))
+		time.Sleep(399*time.Millisecond)
 		//rf.votedFor = -1
-		rf.Convert(1)
+		rf.Convert(0)	
+		return
+	}
+	select{
+	case <-timeout:
+		//println(strconv.Itoa(rf.me) + "chaoshi to be leader")
+		rf.votedFor = -1
+		rf.Convert(0)
+		return
 	}
 
 	//rf.wg.Wait()
