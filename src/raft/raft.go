@@ -20,7 +20,6 @@ package raft
 import (
 	"bytes"
 	"encoding/gob"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -60,7 +59,7 @@ type Raft struct {
 	nextIndex     int
 	matchIndex    int
 	wg            sync.WaitGroup
-	ch            chan bool
+	applymsg      chan ApplyMsg
 	// Your data here.
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -122,8 +121,9 @@ func (rf *Raft) readPersist(data []byte) {
 
 type RaftLog struct {
 	Command int
-	Term int
+	Term    int
 }
+
 //
 // example RequestVote RPC arguments structure.
 //
@@ -152,7 +152,7 @@ type RequestVoteReply struct {
 //
 type AppendEntriseArgs struct {
 	// Your data here.
-	Isheart bool
+	Isheart      bool
 	Term         int
 	LeaderId     int
 	PrevLogIndex int
@@ -209,30 +209,49 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 
 	//rf.ch <- true
 	//term, _ := rf.GetState()
+
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
+		reply.Term = rf.CurrentTerm
+		return
 		//println("reply term big ")
 	}
 	if args.Term >= rf.CurrentTerm {
 		if args.Isheart {
 			reply.Success = true
-			rf.CurrentTerm = args.Term
+			//rf.CurrentTerm = args.Term
 
 			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
 			rf.Convert(0)
-		}else {
+		} else {
+			//println(args.Entries[len(args.Entries) - 1].Command)
 			reply.Success = true
 			rf.CurrentTerm = args.Term
-
+			if args.PrevLogIndex > len(rf.log)-1 || !(rf.log[args.PrevLogIndex].Term == args.PrevLogTerm) {
+				reply.Success = false
+				reply.Term = rf.CurrentTerm
+				return
+			}
+			rf.log = append(rf.log, args.Entries[0])
+			println(args.Entries[0].Command)
+			//TODO:delect every confilicts
+			rf.commitIndex = rf.commitIndex + 1
+			//TODO commit index
+			rf.applymsg <- ApplyMsg{
+				Index:       rf.commitIndex,
+				Command:     rf.log[rf.commitIndex].Command,
+				UseSnapshot: false,
+				Snapshot:    nil,
+			}
+			//println("update log follower")
 
 			rf.Convert(0)
 		}
-
-
+		reply.Term = rf.CurrentTerm
 
 		//println("get heart from " + strconv.Itoa(args.leaderId))
 	}
-	reply.Term = rf.CurrentTerm
+
 	//println(reply.success)
 	//defer rf.wg.Done()
 
@@ -272,6 +291,52 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriseArgs, reply *App
 	return ok
 }
 
+func (rf *Raft) SendAppendLogs() {
+	args := &AppendEntriseArgs{}
+	args.Term = rf.CurrentTerm
+	args.LeaderId = rf.me
+	args.LeaderCommit = rf.commitIndex
+	args.PrevLogIndex = len(rf.log) - 2
+	args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+	args.Isheart = false
+	//println(rf.log[len(rf.log)-1].Command)
+	//println(len(rf.log))
+	for i := rf.nextIndex; i < len(rf.log); i++ {
+		args.Entries = append(args.Entries, rf.log[i])
+	}
+
+	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
+		reply := &AppendEntriseReply{}
+		reply.Term = -1
+		//println(reply.Term)
+		if rf.sendAppendEntries(i, *args, reply) {
+
+			if reply.Success {
+				//println("heard reply from " + strconv.Itoa(i))
+			}
+			if reply.Term > rf.CurrentTerm {
+				rf.CurrentTerm = reply.Term
+				rf.Convert(0)
+				//println(strconv.Itoa(rf.me) + " convert to follower")
+				break
+			}
+
+		}
+		//TODO:update commitIndex
+
+	}
+	rf.commitIndex = rf.commitIndex + 1
+	rf.applymsg <- ApplyMsg{
+		Index:       rf.commitIndex,
+		Command:     rf.log[rf.commitIndex].Command,
+		UseSnapshot: false,
+		Snapshot:    nil,
+	}
+}
+
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -286,52 +351,25 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriseArgs, reply *App
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := 0
-	rf.commitIndex = rf.commitIndex + 1
+	index := rf.commitIndex
 	term := rf.CurrentTerm
 	isLeader := rf.state == 2
-	if isLeader{
+	if isLeader && len(rf.log) >= rf.nextIndex {
 		mylog := RaftLog{
 			Command: command.(int),
-			Term: rf.CurrentTerm,
+			Term:    rf.CurrentTerm,
 		}
-		rf.log = append(rf.log, mylog)
-		println(rf.log[0].Term)
-		args := &AppendEntriseArgs{}
-		args.Term = rf.CurrentTerm
-		args.LeaderId = rf.me
-		args.LeaderCommit = rf.commitIndex
-		args.PrevLogIndex = rf.commitIndex
-		//args.PrevLogTerm = rf.
-		args.Isheart = false
-		for i := 0; i < len(rf.peers); i++ {
-			if i == rf.me {
-				continue
-			}
-			reply := &AppendEntriseReply{}
-			reply.Term = -1
-			cnt := 0
-			//println(reply.Term)
-			if rf.sendAppendEntries(i, *args, reply) {
-				cnt++
-				if reply.Success {
-					//println("heard reply from " + strconv.Itoa(i))
-				}
-				if reply.Term > rf.CurrentTerm {
-					rf.CurrentTerm = reply.Term
-					rf.Convert(0)
-					//println(strconv.Itoa(rf.me) + " convert to follower")
-					break
-				}
+		if rf.log[len(rf.log)-1].Command != mylog.Command {
+			rf.log = append(rf.log, mylog)
+		}
 
-			}
-			if cnt == 0 {
-				rf.Convert(1)
-				break
-			}
+		if len(rf.log)-1 >= rf.nextIndex {
+			go rf.SendAppendLogs()
 
 		}
+
 	}
+
 	return index, term, isLeader
 }
 
@@ -359,8 +397,12 @@ func (rf *Raft) Convert(state int) {
 
 	}
 	if state == 2 {
+		rf.mu.Lock()
 		rf.isgetHeart = false
 		rf.state = 2
+		rf.nextIndex = len(rf.log)
+		rf.matchIndex = 0
+		rf.mu.Unlock()
 		//println(strconv.Itoa(rf.me) + ": im leader")
 		go func() {
 			for rf.state == 2 {
@@ -389,14 +431,14 @@ func (rf *Raft) Convert(state int) {
 						if reply.Term > rf.CurrentTerm {
 							rf.CurrentTerm = reply.Term
 							rf.Convert(0)
-							println(strconv.Itoa(rf.me) + " convert to follower")
+							//println(strconv.Itoa(rf.me) + " convert to follower")
 							break
 						}
 
 					}
 					if cnt == 0 {
-						rf.Convert(1)
-						break
+						//rf.Convert(1)
+						//break
 					}
 
 				}
@@ -404,17 +446,21 @@ func (rf *Raft) Convert(state int) {
 			}
 		}()
 	} else if state == 1 {
+		rf.mu.Lock()
 		rf.isgetHeart = false
 		rf.state = 1
 		rf.CurrentTerm++
+		rf.mu.Unlock()
 		//println(strconv.Itoa(rf.me) + " Term change to " + strconv.Itoa(rf.CurrentTerm))
 		//rf.votedFor = -1
 		//println("go elect")
 		go rf.StartElect()
 
 	} else if state == 0 {
+		rf.mu.Lock()
 		rf.state = 0
 		rf.isgetHeart = true
+		rf.mu.Unlock()
 		go func() {
 
 			for rf.state == 0 {
@@ -457,7 +503,6 @@ func (rf *Raft) StartElect() {
 	args.Term = rf.CurrentTerm
 	args.CandidateId = rf.me
 
-
 	//timeout := time.After(500*time.Millisecond)
 
 	for i := 0; i < len(rf.peers); i++ {
@@ -496,12 +541,11 @@ func (rf *Raft) StartElect() {
 		return
 	} else {
 		//println(strconv.Itoa(rf.me) + "fail to be leader and now leader is" + strconv.Itoa(rf.votedFor))
-		time.Sleep(399*time.Millisecond)
+		time.Sleep(399 * time.Millisecond)
 		//rf.votedFor = -1
-		rf.Convert(0)	
+		rf.Convert(0)
 		return
 	}
-
 
 	//rf.wg.Wait()
 	//println("it ends")
@@ -524,6 +568,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	//println(&rf)
 	rf.peers = peers
 	rf.persister = persister
+	rf.applymsg = applyCh
+	//rf.mss = make(chan bool)
+
 	// Your initialization code here.
 	rf.me = me //index of this server
 	rf.isgetHeart = false
@@ -532,6 +579,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.state = 0
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+	mylog := RaftLog{
+		Command: 0,
+		Term:    0,
+	}
+	rf.log = append(rf.log, mylog)
 	//rf.log = append(rf.log, 1)
 
 	//println(me)   //0,1,2 have three server and the make is to every one
