@@ -54,7 +54,7 @@ type Raft struct {
 	state         int
 	timeUnixHeart int64
 	isgetHeart    bool
-	log           []byte
+	log           []RaftLog
 	commitIndex   int
 	lastApplied   int
 	nextIndex     int
@@ -120,6 +120,10 @@ func (rf *Raft) readPersist(data []byte) {
 	// d.Decode(&rf.yyy)
 }
 
+type RaftLog struct {
+	Command int
+	Term int
+}
 //
 // example RequestVote RPC arguments structure.
 //
@@ -148,11 +152,12 @@ type RequestVoteReply struct {
 //
 type AppendEntriseArgs struct {
 	// Your data here.
+	Isheart bool
 	Term         int
 	LeaderId     int
 	PrevLogIndex int
 	PrevLogTerm  int
-	Entries      []byte
+	Entries      []RaftLog
 	LeaderCommit int
 }
 
@@ -204,21 +209,27 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 
 	//rf.ch <- true
 	//term, _ := rf.GetState()
-	if rf.me == 0 {
-		//println("append: " + strconv.Itoa(args.Term) + " " + strconv.Itoa(rf.me) + " " + strconv.Itoa(rf.CurrentTerm))
-	}
-
 	if args.Term < rf.CurrentTerm {
 		reply.Success = false
 		//println("reply term big ")
 	}
 	if args.Term >= rf.CurrentTerm {
+		if args.Isheart {
+			reply.Success = true
+			rf.CurrentTerm = args.Term
 
-		reply.Success = true
-		rf.CurrentTerm = args.Term
-		reply.Term = rf.CurrentTerm
-		rf.timeUnixHeart = time.Now().UnixNano() / 1000000
-		rf.Convert(0)
+			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
+			rf.Convert(0)
+		}else {
+			reply.Success = true
+			rf.CurrentTerm = args.Term
+
+
+			rf.Convert(0)
+		}
+
+
+
 		//println("get heart from " + strconv.Itoa(args.leaderId))
 	}
 	reply.Term = rf.CurrentTerm
@@ -275,10 +286,52 @@ func (rf *Raft) sendAppendEntries(server int, args AppendEntriseArgs, reply *App
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	index := 0
+	rf.commitIndex = rf.commitIndex + 1
+	term := rf.CurrentTerm
+	isLeader := rf.state == 2
+	if isLeader{
+		mylog := RaftLog{
+			Command: command.(int),
+			Term: rf.CurrentTerm,
+		}
+		rf.log = append(rf.log, mylog)
+		println(rf.log[0].Term)
+		args := &AppendEntriseArgs{}
+		args.Term = rf.CurrentTerm
+		args.LeaderId = rf.me
+		args.LeaderCommit = rf.commitIndex
+		args.PrevLogIndex = rf.commitIndex
+		//args.PrevLogTerm = rf.
+		args.Isheart = false
+		for i := 0; i < len(rf.peers); i++ {
+			if i == rf.me {
+				continue
+			}
+			reply := &AppendEntriseReply{}
+			reply.Term = -1
+			cnt := 0
+			//println(reply.Term)
+			if rf.sendAppendEntries(i, *args, reply) {
+				cnt++
+				if reply.Success {
+					//println("heard reply from " + strconv.Itoa(i))
+				}
+				if reply.Term > rf.CurrentTerm {
+					rf.CurrentTerm = reply.Term
+					rf.Convert(0)
+					//println(strconv.Itoa(rf.me) + " convert to follower")
+					break
+				}
 
+			}
+			if cnt == 0 {
+				rf.Convert(1)
+				break
+			}
+
+		}
+	}
 	return index, term, isLeader
 }
 
@@ -315,6 +368,7 @@ func (rf *Raft) Convert(state int) {
 				args := &AppendEntriseArgs{}
 				args.Term = rf.CurrentTerm
 				args.LeaderId = rf.me
+				args.Isheart = true
 
 				for i := 0; i < len(rf.peers); i++ {
 					if i == rf.me {
@@ -402,7 +456,10 @@ func (rf *Raft) StartElect() {
 	var cntmach = 0
 	args.Term = rf.CurrentTerm
 	args.CandidateId = rf.me
-	timeout := time.After(500*time.Millisecond)
+
+
+	//timeout := time.After(500*time.Millisecond)
+
 	for i := 0; i < len(rf.peers); i++ {
 		//var count int = 0
 		//println(i)
@@ -423,7 +480,7 @@ func (rf *Raft) StartElect() {
 			//println("request vote form " + strconv.Itoa(i) + " to " + strconv.Itoa(rf.me))
 			if reply.VoteGranted {
 				count++
-				//println("get vote from " + strconv.Itoa(i))
+				//println("get vote from " + strconv.Itoa(i) + "his term " + strconv.Itoa(reply.Term))
 			}
 			if reply.Term > rf.CurrentTerm {
 				//println("convert to 0")
@@ -444,13 +501,7 @@ func (rf *Raft) StartElect() {
 		rf.Convert(0)	
 		return
 	}
-	select{
-	case <-timeout:
-		//println(strconv.Itoa(rf.me) + "chaoshi to be leader")
-		rf.votedFor = -1
-		rf.Convert(0)
-		return
-	}
+
 
 	//rf.wg.Wait()
 	//println("it ends")
