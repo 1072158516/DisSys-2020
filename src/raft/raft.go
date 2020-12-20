@@ -319,41 +319,45 @@ func (rf *Raft) SendCommitmss(commit int, command int) {
 
 func (rf *Raft) SendAppendLogs() {
 
-	for i := 0; i < len(rf.peers); i++ {
-		if i == rf.me {
+	for i1 := 0; i1 < len(rf.peers); i1++ {
+		if i1 == rf.me {
 			continue
 		}
-		args := &AppendEntriseArgs{}
-		args.Term = rf.CurrentTerm
-		args.LeaderId = rf.me
-		args.LeaderCommit = rf.commitIndex
-		args.PrevLogIndex = rf.nextIndex[i] - 1
-		args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
-		args.Isheart = false
-		//println(rf.log[len(rf.log)-1].Command)
-		//println(len(rf.log))
-		for j := rf.nextIndex[i]; j < len(rf.log); j++ {
-			args.Entries = append(args.Entries, rf.log[j])
-		}
-		reply := &AppendEntriseReply{}
-		reply.Term = -1
-		//println(reply.Term)
-		if rf.sendAppendEntries(i, *args, reply) {
-
-			if reply.Success {
-				println("heard reply from " + strconv.Itoa(i))
-				rf.matchIndex[i] = len(rf.log) - 1
-				rf.nextIndex[i] = rf.matchIndex[i] + 1
+		i := i1
+		go func() {
+			args := &AppendEntriseArgs{}
+			args.Term = rf.CurrentTerm
+			args.LeaderId = rf.me
+			args.LeaderCommit = rf.commitIndex
+			//println(i)
+			args.PrevLogIndex = rf.nextIndex[i] - 1
+			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
+			args.Isheart = false
+			//println(rf.log[len(rf.log)-1].Command)
+			//println(len(rf.log))
+			for j := rf.nextIndex[i]; j < len(rf.log); j++ {
+				args.Entries = append(args.Entries, rf.log[j])
 			}
-			if reply.Term > rf.CurrentTerm {
-				rf.CurrentTerm = reply.Term
-				rf.Convert(0)
-				//println(strconv.Itoa(rf.me) + " convert to follower")
-				break
-			}
+			reply := &AppendEntriseReply{}
+			reply.Term = -1
+			//println(reply.Term)
+			if rf.sendAppendEntries(i, *args, reply) {
 
-		}
-		//TODO:update commitIndex
+				if reply.Success {
+					println("heard reply from " + strconv.Itoa(i))
+					rf.matchIndex[i] = len(rf.log) - 1
+					rf.nextIndex[i] = rf.matchIndex[i] + 1
+				}
+				if reply.Term > rf.CurrentTerm {
+					rf.CurrentTerm = reply.Term
+					rf.Convert(0)
+					//println(strconv.Itoa(rf.me) + " convert to follower")
+
+				}
+
+			}
+			//TODO:update commitIndex
+		}()
 
 	}
 
@@ -385,7 +389,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		if rf.log[len(rf.log)-1].Command != mylog.Command {
 			rf.log = append(rf.log, mylog)
 		}
-		go rf.SendAppendLogs()
+		rf.SendAppendLogs()
 
 	}
 
@@ -439,10 +443,9 @@ func (rf *Raft) Convert(state int) {
 					}
 					reply := &AppendEntriseReply{}
 					reply.Term = -1
-					cnt := 0
+
 					//println(reply.Term)
 					if rf.sendAppendEntries(i, *args, reply) {
-						cnt++
 
 						//println("my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
 						//println(&reply)
@@ -456,10 +459,6 @@ func (rf *Raft) Convert(state int) {
 							break
 						}
 
-					}
-					if cnt == 0 {
-						//rf.Convert(1)
-						//break
 					}
 
 				}
