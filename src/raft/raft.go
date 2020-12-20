@@ -20,7 +20,7 @@ package raft
 import (
 	"bytes"
 	"encoding/gob"
-	"strconv"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -61,6 +61,7 @@ type Raft struct {
 	matchIndex    []int
 	wg            sync.WaitGroup
 	applymsg      chan ApplyMsg
+	rb            chan bool
 	// Your data here.
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -219,13 +220,13 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 	}
 	if args.Term >= rf.CurrentTerm {
 		if args.Isheart {
+
+		} else {
 			reply.Success = true
 			//rf.CurrentTerm = args.Term
 
 			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
 			rf.Convert(0)
-
-		} else {
 			//println(args.Entries[len(args.Entries) - 1].Command)
 			if args.LeaderCommit > rf.commitIndex {
 				if args.LeaderCommit > len(rf.log)-1 {
@@ -236,17 +237,30 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 				}
 				reply.Success = false
 				reply.Term = rf.CurrentTerm
+				//println("no pro to get here")
 				rf.SendCommitmss(rf.commitIndex, rf.log[rf.commitIndex].Command)
 				return
 
 			}
 			reply.Success = true
-			rf.CurrentTerm = args.Term
-			if args.PrevLogIndex > len(rf.log)-1 || !(rf.log[args.PrevLogIndex].Term == args.PrevLogTerm) {
-				reply.Success = false
+
+			if args.Term > rf.CurrentTerm {
+				rf.mu.Lock()
+				rf.CurrentTerm = args.Term
+				rf.mu.Unlock()
+			} else {
+				//reply.Success = false
 				reply.Term = rf.CurrentTerm
 				return
 			}
+
+			//println(strconv.Itoa(rf.me) + ": my term change to " + strconv.Itoa(rf.CurrentTerm))
+			rf.Convert(0)
+			//if args.PrevLogIndex > len(rf.log)-1 || !(rf.log[args.PrevLogIndex].Term == args.PrevLogTerm) {
+			//reply.Success = false
+			//reply.Term = rf.CurrentTerm
+			//return
+			//}
 			for i := range args.Entries {
 				rf.log = append(rf.log, args.Entries[i])
 				println(args.Entries[0].Command)
@@ -260,7 +274,7 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 		}
 		reply.Term = rf.CurrentTerm
 
-		//println("get heart from " + strconv.Itoa(args.leaderId))
+		//println("get heart from " + strconv.Itoa(args.LeaderId))
 	}
 
 	//println(reply.success)
@@ -325,6 +339,8 @@ func (rf *Raft) SendAppendLogs() {
 		}
 		i := i1
 		go func() {
+			//cb := make(chan bool)
+			//time2 := time.NewTimer(time.Millisecond * 100)
 			args := &AppendEntriseArgs{}
 			args.Term = rf.CurrentTerm
 			args.LeaderId = rf.me
@@ -342,9 +358,10 @@ func (rf *Raft) SendAppendLogs() {
 			reply.Term = -1
 			//println(reply.Term)
 			if rf.sendAppendEntries(i, *args, reply) {
+				//println(strconv.Itoa(rf.me) + ": my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
 
 				if reply.Success {
-					println("heard reply from " + strconv.Itoa(i))
+					//println("heard reply from " + strconv.Itoa(i))
 					rf.matchIndex[i] = len(rf.log) - 1
 					rf.nextIndex[i] = rf.matchIndex[i] + 1
 				}
@@ -352,10 +369,13 @@ func (rf *Raft) SendAppendLogs() {
 					rf.CurrentTerm = reply.Term
 					rf.Convert(0)
 					//println(strconv.Itoa(rf.me) + " convert to follower")
+					rf.rb <- true
+					runtime.Goexit()
 
 				}
 
 			}
+
 			//TODO:update commitIndex
 		}()
 
@@ -414,6 +434,7 @@ func (rf *Raft) Convert(state int) {
 			return
 		} else {
 			if rf.isgetHeart {
+				rf.state = 0
 				return
 			}
 		}
@@ -430,40 +451,22 @@ func (rf *Raft) Convert(state int) {
 		rf.mu.Unlock()
 		//println(strconv.Itoa(rf.me) + ": im leader")
 		go func() {
+			rf.rb = make(chan bool)
+			//time.Sleep(time.Millisecond * 400)
 			for rf.state == 2 {
 				time.Sleep(time.Millisecond * 400)
-				args := &AppendEntriseArgs{}
-				args.Term = rf.CurrentTerm
-				args.LeaderId = rf.me
-				args.Isheart = true
 
-				for i := 0; i < len(rf.peers); i++ {
-					if i == rf.me {
-						continue
-					}
-					reply := &AppendEntriseReply{}
-					reply.Term = -1
+				//println(strconv.Itoa(rf.me)+"rf.state = " + strconv.Itoa(rf.state))
+				if rf.state == 2 {
+					rf.SendAppendLogs()
+				}
 
-					//println(reply.Term)
-					if rf.sendAppendEntries(i, *args, reply) {
-
-						//println("my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
-						//println(&reply)
-						if reply.Success {
-							//println("heard reply from " + strconv.Itoa(i))
-						}
-						if reply.Term > rf.CurrentTerm {
-							rf.CurrentTerm = reply.Term
-							rf.Convert(0)
-							//println(strconv.Itoa(rf.me) + " convert to follower")
-							break
-						}
-
-					}
-
+				if rf.state != 2 {
+					break
 				}
 
 			}
+
 		}()
 	} else if state == 1 {
 		rf.mu.Lock()
