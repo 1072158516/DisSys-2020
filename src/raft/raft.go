@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -168,8 +169,9 @@ type AppendEntriseArgs struct {
 //
 type AppendEntriseReply struct {
 	// Your data here.
-	Term    int
-	Success bool
+	Term       int
+	Success    bool
+	Matchindex int
 }
 
 //
@@ -230,7 +232,15 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			//println(args.Entries[len(args.Entries) - 1].Command)
 
 			//println(strconv.Itoa(rf.me) + ": my term change to " + strconv.Itoa(rf.CurrentTerm))
-			rf.Convert(0)
+			nextIndex := reply.Matchindex
+			for i := range rf.log {
+				if args.PrevLogIndex == i && rf.log[args.PrevLogIndex].Term == args.PrevLogTerm {
+					nextIndex = args.PrevLogIndex + 1
+
+				}
+			}
+			//rf.log = append(rf.log[:nextIndex], rf.log[nextIndex+1:]...)
+			rf.log = rf.log[:nextIndex]
 			//if args.PrevLogIndex > len(rf.log)-1 || !(rf.log[args.PrevLogIndex].Term == args.PrevLogTerm) {
 			//reply.Success = false
 			//reply.Term = rf.CurrentTerm
@@ -239,8 +249,11 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			rf.mu.Lock()
 			for i := range args.Entries {
 				rf.log = append(rf.log, args.Entries[i])
-				println(args.Entries[0].Command)
+				//println(args.Entries[0].Command)
+				reply.Matchindex = reply.Matchindex + 1
+				//println(reply.Matchindex)
 			}
+			println(len(rf.log))
 			rf.mu.Unlock()
 			rf.mu.Lock()
 			if args.LeaderCommit > rf.commitIndex {
@@ -258,7 +271,6 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 
 			}
 			rf.mu.Unlock()
-			reply.Success = true
 
 			//TODO:delect every confilicts
 
@@ -355,19 +367,23 @@ func (rf *Raft) SendAppendLogs() {
 			//println(rf.log[len(rf.log)-1].Command)
 			//println(len(rf.log))
 			for j := rf.nextIndex[i]; j < len(rf.log); j++ {
-				//println(strconv.Itoa(j) + " " + strconv.Itoa(len(rf.log)))
+				println(strconv.Itoa(j) + " " + strconv.Itoa(len(rf.log)))
 				args.Entries = append(args.Entries, rf.log[j])
 			}
 			reply := &AppendEntriseReply{}
 			reply.Term = -1
+			reply.Matchindex = rf.matchIndex[i]
 			//println(reply.Term)
 			if rf.sendAppendEntries(i, *args, reply) {
 				//println(strconv.Itoa(rf.me) + ": my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
 
 				if reply.Success {
 					//println("heard reply from " + strconv.Itoa(i))
-					rf.matchIndex[i] = len(rf.log) - 1
+					rf.mu.Lock()
+					rf.matchIndex[i] = reply.Matchindex
 					rf.nextIndex[i] = rf.matchIndex[i] + 1
+					rf.mu.Unlock()
+					//println(rf.matchIndex[i])
 				}
 				if reply.Term > rf.CurrentTerm {
 					rf.CurrentTerm = reply.Term
@@ -382,24 +398,24 @@ func (rf *Raft) SendAppendLogs() {
 
 			//TODO:update commitIndex
 		}()
-		N := rf.commitIndex + 1
-		count := 0
-		for i := range rf.peers {
-			rf.mu.Lock()
-			if rf.matchIndex[i] >= N && i != rf.me {
-				count++
-			}
-			rf.mu.Unlock()
-		}
-		if count >= len(rf.peers)-1 {
-			rf.mu.Lock()
-			rf.commitIndex = N
-			rf.SendCommitmss()
-			rf.mu.Unlock()
-		}
-
 	}
-
+	//time.Sleep(time.Millisecond * 50)
+	N := rf.commitIndex + 1
+	count := 0
+	for i := range rf.peers {
+		rf.mu.Lock()
+		if rf.matchIndex[i] >= N && i != rf.me {
+			count++
+			//println(i)
+		}
+		rf.mu.Unlock()
+	}
+	if count >= len(rf.peers)-1 {
+		rf.mu.Lock()
+		rf.commitIndex = N
+		rf.SendCommitmss()
+		rf.mu.Unlock()
+	}
 	//rf.SendCommitmss(rf.commitIndex,rf.log[rf.commitIndex].Command)
 }
 
@@ -485,7 +501,7 @@ func (rf *Raft) Convert(state int) {
 				if rf.state != 2 {
 					break
 				}
-				time.Sleep(time.Millisecond * 200)
+				time.Sleep(time.Millisecond * 400)
 			}
 
 		}()
@@ -510,7 +526,7 @@ func (rf *Raft) Convert(state int) {
 			for rf.state == 0 {
 				rf.mu.Lock()
 				rf.mu.Unlock()
-				time.Sleep(time.Millisecond * 100)
+				time.Sleep(time.Millisecond * 300)
 				var timezone = time.Now().UnixNano() / 1000000
 				//println(timezone)
 				if timezone-rf.timeUnixHeart > 1000 {
