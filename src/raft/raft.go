@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"runtime"
+
 	"strconv"
 	"sync"
 	"time"
@@ -236,11 +237,21 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			for i := range rf.log {
 				if args.PrevLogIndex == i && rf.log[args.PrevLogIndex].Term == args.PrevLogTerm {
 					nextIndex = args.PrevLogIndex + 1
-
+					if rf.me == 0 {
+						println(strconv.Itoa(args.LeaderId) + "previndex" + strconv.Itoa(args.PrevLogIndex))
+						println("nextindex: " + strconv.Itoa(nextIndex))
+					}
 				}
 			}
 			//rf.log = append(rf.log[:nextIndex], rf.log[nextIndex+1:]...)
 			rf.log = rf.log[:nextIndex]
+			if rf.me == 0 {
+				for i := range rf.log {
+					print(rf.log[i].Command)
+					print(" ")
+				}
+				println()
+			}
 			//if args.PrevLogIndex > len(rf.log)-1 || !(rf.log[args.PrevLogIndex].Term == args.PrevLogTerm) {
 			//reply.Success = false
 			//reply.Term = rf.CurrentTerm
@@ -249,11 +260,11 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			rf.mu.Lock()
 			for i := range args.Entries {
 				rf.log = append(rf.log, args.Entries[i])
-				println(args.Entries[0].Command)
+				//println(args.Entries[0].Command)
 				reply.Matchindex = reply.Matchindex + 1
 
 			}
-			//println(len(rf.log))
+			println("replymatch: " + strconv.Itoa(reply.Matchindex))
 			rf.mu.Unlock()
 			rf.mu.Lock()
 			for args.LeaderCommit > rf.commitIndex {
@@ -348,11 +359,13 @@ func (rf *Raft) SendCommitmss() {
 		Snapshot:    nil,
 	}
 	if rf.state == 2 {
-		println("leader send")
-		for i := range rf.log {
-			println("log: " + strconv.Itoa(rf.log[i].Command))
-		}
+		//println("leader send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
+		//for i := range rf.log {
+		//println("log: " + strconv.Itoa(rf.log[i].Command))
+		//}
 		//go rf.SendAppendLogs()
+	} else {
+		//println("fllower send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
 	}
 
 }
@@ -367,6 +380,7 @@ func (rf *Raft) SendAppendLogs() {
 		go func() {
 			//cb := make(chan bool)
 			//time2 := time.NewTimer(time.Millisecond * 100)
+			rf.mu.Lock()
 			args := &AppendEntriseArgs{}
 			args.Term = rf.CurrentTerm
 			args.LeaderId = rf.me
@@ -375,6 +389,7 @@ func (rf *Raft) SendAppendLogs() {
 			args.PrevLogIndex = rf.nextIndex[i] - 1
 			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
 			args.Isheart = false
+			rf.mu.Unlock()
 			//println(rf.log[len(rf.log)-1].Command)
 			//println(len(rf.log))
 			for j := rf.nextIndex[i]; j < len(rf.log); j++ {
@@ -446,23 +461,38 @@ func (rf *Raft) SendAppendLogs() {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := rf.commitIndex + 1
+	rf.mu.Lock()
+	//time.Sleep(time.Millisecond * 200)
+	index := len(rf.log)
 	term := rf.CurrentTerm
 	isLeader := rf.state == 2
+
+	rf.mu.Unlock()
 	if isLeader {
 		mylog := RaftLog{
 			Command: command.(int),
 			Term:    rf.CurrentTerm,
 		}
-		if rf.log[len(rf.log)-1].Command != mylog.Command {
-			rf.mu.Lock()
-			rf.log = append(rf.log, mylog)
-			rf.mu.Unlock()
-		}
+		//if rf.log[len(rf.log)-1].Command != mylog.Command {
+		//for i:= range rf.log{
+		//if rf.log[i].Command == mylog.Command{
+		//rf.mu.Unlock()
+		//return index - 1, term, isLeader
+		//}
+
+		//}
+		rf.mu.Lock()
+		rf.log = append(rf.log, mylog)
+		rf.mu.Unlock()
+		//go rf.SendAppendLogs()
+
+		//println(rf.log[len(rf.log) - 1].Command)
+		//}
 		//rf.SendAppendLogs()
 
 	}
 
+	//println("index: " + strconv.Itoa(index))
 	return index, term, isLeader
 }
 
@@ -495,9 +525,12 @@ func (rf *Raft) Convert(state int) {
 		rf.isgetHeart = false
 		rf.state = 2
 		for i := range rf.peers {
-			rf.nextIndex[i] = len(rf.log)
-			//println(rf.nextIndex[i])
-			rf.matchIndex[i] = 0
+			if rf.me != i {
+				rf.nextIndex[i] = len(rf.log)
+				//println(rf.nextIndex[i])
+				rf.matchIndex[i] = 0
+			}
+
 		}
 		rf.mu.Unlock()
 		println(strconv.Itoa(rf.me) + ": im leader")
