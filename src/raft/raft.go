@@ -79,7 +79,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var leader bool
 	leader = false
 	if rf.state == 2 {
+		//time.Sleep(time.Millisecond * 500)
+
 		leader = true
+
 	}
 	//println("getstate:" + " " + strconv.Itoa(rf.state) + " " + strconv.Itoa(rf.me) +  " " + strconv.Itoa(rf.CurrentTerm))
 
@@ -185,29 +188,35 @@ type AppendEntriseReply struct {
 func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here.
 
-	//println(strconv.Itoa(rf.me) + " state = " + strconv.Itoa(rf.state))
+	//println(strconv.Itoa(rf.me) + " state = " + strconv.Itoa(rf.state) + "term: " + strconv.Itoa(rf.CurrentTerm))
 	if args.Term < rf.CurrentTerm {
 		reply.VoteGranted = false
 	}
 	if args.Term >= rf.CurrentTerm {
-		rf.CurrentTerm = args.Term
-		if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+		if args.Term > rf.CurrentTerm {
+
 			reply.VoteGranted = true
+			rf.mu.Lock()
+			rf.CurrentTerm = args.Term
+			//println("im in" + strconv.Itoa(rf.CurrentTerm))
 			rf.votedFor = args.CandidateId
 			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
-			//println(rf.timeUnixHeart)
+			rf.mu.Unlock()
+		} else {
+			//rf.CurrentTerm = args.Term
+			if rf.votedFor == -1 || rf.votedFor == args.CandidateId {
+				rf.mu.Lock()
+				reply.VoteGranted = true
+				rf.votedFor = args.CandidateId
+				rf.timeUnixHeart = time.Now().UnixNano() / 1000000
+				rf.mu.Unlock()
+				//println(rf.timeUnixHeart)
+			}
 		}
+
 		rf.Convert(0)
 	}
 	reply.Term = rf.CurrentTerm
-
-	//defer rf.wg.Done()
-
-	//println("vote to " + strconv.Itoa(args.CandidateId))
-	//print(rf.GetState())
-
-	//rf.GetState()
-	//print(args.Term)
 }
 func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply) {
 	// Your code here.
@@ -222,15 +231,20 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 		//println("reply term big ")
 	}
 	if args.Term >= rf.CurrentTerm {
-		rf.Convert(0)
+		//rf.Convert(0)
 		if args.Isheart {
-
+			reply.Success = true
+			rf.mu.Lock()
+			rf.CurrentTerm = args.Term
+			reply.Term = rf.CurrentTerm
+			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
+			rf.mu.Unlock()
+			//println("llllllllll")
+			//go rf.Convert(0)
+			return
 		} else {
 			reply.Success = true
 			//rf.CurrentTerm = args.Term
-
-			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
-			rf.Convert(0)
 			//println(args.Entries[len(args.Entries) - 1].Command)
 
 			//println(strconv.Itoa(rf.me) + ": my term change to " + strconv.Itoa(rf.CurrentTerm))
@@ -268,38 +282,49 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			//return
 			//}
 			rf.mu.Lock()
+			//flag = false
 			for i := range args.Entries {
 				rf.log = append(rf.log, args.Entries[i])
-				println(args.Entries[i].Command)
+				println(strconv.Itoa(rf.me) + " append: " + strconv.Itoa(args.Entries[i].Command) + " no." + strconv.Itoa(len(rf.log)-1))
 				reply.Matchindex = len(rf.log) - 1
+				reply.Term = rf.CurrentTerm
 
 			}
-			//println("replymatch: " + strconv.Itoa(reply.Matchindex))
 			rf.mu.Unlock()
-			rf.mu.Lock()
-			for args.LeaderCommit > rf.commitIndex {
+			//if flag{
+			//	return
+			//}
+			//println("replymatch: " + strconv.Itoa(reply.Matchindex))
+
+			/*for args.LeaderCommit > rf.commitIndex {
 				//println("leader commit: " + strconv.Itoa(args.LeaderCommit))
 				if args.LeaderCommit < len(rf.log)-1 {
+					rf.mu.Lock()
 					rf.commitIndex = rf.commitIndex + 1
 					rf.SendCommitmss()
+					rf.mu.Unlock()
 				} else {
-					rf.commitIndex = len(rf.log) - 1
-					rf.SendCommitmss()
-					println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
-					break
+					rf.mu.Lock()
+					if rf.commitIndex + 2 == len(rf.log){
+						rf.commitIndex = len(rf.log) - 1
+						rf.SendCommitmss()
+						println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
+						rf.mu.Unlock()
+						break
+					}else{
+						rf.mu.Lock()
+						rf.commitIndex = rf.commitIndex + 1
+						rf.SendCommitmss()
+						rf.mu.Unlock()
+					}
+
 
 				}
 				reply.Success = true
 				reply.Term = rf.CurrentTerm
 				println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
-				//for i := range rf.log{
-				//	println("log: " + strconv.Itoa(rf.log[i].Command))
-				//}
-
-				//return
-
-			}
-			rf.mu.Unlock()
+			}*/
+			//rf.mu.Unlock()
 
 			//TODO:delect every confilicts
 
@@ -307,27 +332,7 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 
 			rf.Convert(0)
 		}
-
-		if args.Term > rf.CurrentTerm {
-			rf.mu.Lock()
-			rf.CurrentTerm = args.Term
-			rf.mu.Unlock()
-		} else {
-			//reply.Success = false
-			reply.Term = rf.CurrentTerm
-			return
-		}
-		reply.Term = rf.CurrentTerm
-		//println("get heart from " + strconv.Itoa(args.LeaderId))
 	}
-
-	//println(reply.success)
-	//defer rf.wg.Done()
-
-	//print(rf.GetState())
-
-	//rf.GetState()
-	//print(args.Term)
 }
 
 //
@@ -369,7 +374,7 @@ func (rf *Raft) SendCommitmss() {
 		Snapshot:    nil,
 	}
 	if rf.state == 2 {
-		//println("leader send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
+		println("leader send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
 		//for i := range rf.log {
 		//println("log: " + strconv.Itoa(rf.log[i].Command))
 		//}
@@ -450,22 +455,23 @@ func (rf *Raft) SendAppendLogs() {
 		}()
 	}
 	//time.Sleep(time.Millisecond * 50)
-	N := rf.commitIndex + 1
+	/*N := rf.commitIndex + 1
 	count := 0
 	for i := range rf.peers {
 		rf.mu.Lock()
 		if rf.matchIndex[i] >= N && i != rf.me {
 			count++
-			//println(i)
+
 		}
 		rf.mu.Unlock()
 	}
+	println(strconv.Itoa(count) + "<-count rf.len: "+ strconv.Itoa(len(rf.log)))
 	if count >= (len(rf.peers)-1)/2 {
 		rf.mu.Lock()
 		rf.commitIndex = N
 		rf.SendCommitmss()
 		rf.mu.Unlock()
-	}
+	}*/
 	//rf.SendCommitmss(rf.commitIndex,rf.log[rf.commitIndex].Command)
 }
 
@@ -495,14 +501,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command.(int),
 			Term:    rf.CurrentTerm,
 		}
-		//if rf.log[len(rf.log)-1].Command != mylog.Command {
-		//for i:= range rf.log{
-		//if rf.log[i].Command == mylog.Command{
-		//rf.mu.Unlock()
-		//return index - 1, term, isLeader
-		//}
 
-		//}
 		rf.mu.Lock()
 		rf.log = append(rf.log, mylog)
 		rf.mu.Unlock()
@@ -510,7 +509,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 		//println(rf.log[len(rf.log) - 1].Command)
 		//}
-		//rf.SendAppendLogs()
+		rf.SendAppendLogs()
 
 	}
 
@@ -531,16 +530,8 @@ func (rf *Raft) Convert(state int) {
 	// Your code here, if desired.
 	//rf.mu.Lock()
 	//defer rf.mu.Unlock()
-	if state == rf.state {
-		if state != 0 {
-			return
-		} else {
-			if rf.isgetHeart {
-				rf.state = 0
-				return
-			}
-		}
-
+	if state == rf.state && state != 0 {
+		return
 	}
 	if state == 2 {
 		rf.mu.Lock()
@@ -555,23 +546,56 @@ func (rf *Raft) Convert(state int) {
 
 		}
 		rf.mu.Unlock()
-		println(strconv.Itoa(rf.me) + ": im leader")
+		//println(strconv.Itoa(rf.me) + ": im leader")
 		go func() {
-			rf.rb = make(chan bool)
+
 			//time.Sleep(time.Millisecond * 400)
-			if rf.state == 2 {
-				rf.SendAppendLogs()
-			}
+
 			for rf.state == 2 {
 
-				//println(strconv.Itoa(rf.me)+"rf.state = " + strconv.Itoa(rf.state))
+				count := 0
+				for i1 := 0; i1 < len(rf.peers); i1++ {
+					//println(strconv.Itoa(rf.me)+"rf.state = " + strconv.Itoa(rf.state))
+					//println(rf.state)
+					if i1 == rf.me || rf.state != 2 {
+						continue
+					}
+					i := i1
+					go func() {
+						//cb := make(chan bool)
+						//time2 := time.NewTimer(time.Millisecond * 100)
+						rf.mu.Lock()
+						args := &AppendEntriseArgs{}
+						args.Term = rf.CurrentTerm
+						args.LeaderId = rf.me
+						args.LeaderCommit = rf.commitIndex
+						args.Isheart = true
+						//println(i)
+						reply := &AppendEntriseReply{}
+						reply.Term = -1
+						reply.Matchindex = rf.matchIndex[i]
+						rf.mu.Unlock()
+						//println(reply.Term)
+						if rf.sendAppendEntries(i, *args, reply) {
 
-				if rf.state != 2 {
-					break
+							if reply.Success {
+
+							}
+							if reply.Term > rf.CurrentTerm {
+								rf.mu.Lock()
+								rf.CurrentTerm = reply.Term
+								rf.mu.Unlock()
+								rf.Convert(0)
+								return
+							}
+							count++
+						}
+
+					}()
 				}
-				time.Sleep(time.Millisecond * 400)
-				if rf.state == 2 {
-					rf.SendAppendLogs()
+				time.Sleep(time.Millisecond * 200)
+				if count < 1 {
+					rf.Convert(0)
 				}
 			}
 
@@ -581,6 +605,7 @@ func (rf *Raft) Convert(state int) {
 		rf.isgetHeart = false
 		rf.state = 1
 		rf.CurrentTerm++
+		rf.votedFor = -1
 		rf.mu.Unlock()
 		//println(strconv.Itoa(rf.me) + " Term change to " + strconv.Itoa(rf.CurrentTerm))
 		//rf.votedFor = -1
@@ -588,22 +613,30 @@ func (rf *Raft) Convert(state int) {
 		go rf.StartElect()
 
 	} else if state == 0 {
+
 		rf.mu.Lock()
 		rf.state = 0
-		rf.isgetHeart = true
+		if rf.isgetHeart == true {
+			rf.mu.Unlock()
+			return
+		} else {
+			rf.isgetHeart = true
+		}
 		rf.mu.Unlock()
 		go func() {
 
 			for rf.state == 0 {
-				rf.mu.Lock()
-				rf.mu.Unlock()
+
 				time.Sleep(time.Millisecond * 300)
 				var timezone = time.Now().UnixNano() / 1000000
 				//println(timezone)
+				//println(rf.timeUnixHeart)
 				if timezone-rf.timeUnixHeart > 1000 {
 					//println("election timeout from " + strconv.Itoa(rf.me))
+					rf.mu.Lock()
 					rf.votedFor = -1
-					time.Sleep(time.Millisecond * (200*time.Duration(rf.me+1) + 50))
+					rf.mu.Unlock()
+					time.Sleep(time.Millisecond * (100 * time.Duration(rf.me+1)))
 					if rf.votedFor == -1 {
 						rf.Convert(1)
 						//println("start election from " + strconv.Itoa(rf.me))
@@ -621,60 +654,65 @@ func (rf *Raft) Convert(state int) {
 }
 
 func (rf *Raft) StartElect() {
-	//rf.mu.Lock()
-	//defer rf.mu.Unlock()
-
-	//defer rf.wg.Done()
 
 	args := &RequestVoteArgs{}
 
-	//rf.votedFor = rf.me
 	var count = 0
 	var cntmach = 0
 	args.Term = rf.CurrentTerm
 	args.CandidateId = rf.me
+	//waitGroup := sync.WaitGroup{}
+	//waitGroup.Add(len(rf.peers))
+	for i1 := 0; i1 < len(rf.peers); i1++ {
+		i := i1
+		go func() {
 
-	//timeout := time.After(500*time.Millisecond)
+			reply := new(RequestVoteReply)
+			reply.Term = -1
+			reply.VoteGranted = false
+			//rf.sendRequestVote(i, *args, reply)
+			ok := rf.sendRequestVote(i, *args, reply)
+			{
 
-	for i := 0; i < len(rf.peers); i++ {
-		//var count int = 0
-		//println(i)
-		//println(strconv.Itoa(rf.me) + " request vote")
-		//if rf.state != 1{
-		//	break
-		//}
-		reply := new(RequestVoteReply)
-		reply.Term = -1
-		reply.VoteGranted = false
-		//rf.sendRequestVote(i, *args, reply)
-		ok := rf.sendRequestVote(i, *args, reply)
-		{
-			if ok {
-				cntmach++
-			}
+				if ok {
+					cntmach++
+				}
 
-			//println("request vote form " + strconv.Itoa(i) + " to " + strconv.Itoa(rf.me))
-			if reply.VoteGranted {
-				count++
-				//println("get vote from " + strconv.Itoa(i) + "his term " + strconv.Itoa(reply.Term))
+				//println("request vote form " + strconv.Itoa(i) + " to " + strconv.Itoa(rf.me))
+				if reply.VoteGranted {
+					count++
+					//println("get vote from " + strconv.Itoa(i) + "his term " + strconv.Itoa(reply.Term))
+				}
+				if reply.Term > rf.CurrentTerm {
+					//println("convert to 0")
+					rf.CurrentTerm = reply.Term
+					rf.Convert(0)
+					//waitGroup.Done()
+					return
+				}
 			}
-			if reply.Term > rf.CurrentTerm {
-				//println("convert to 0")
-				rf.CurrentTerm = reply.Term
-				rf.Convert(0)
-				break
-			}
-		}
+			//waitGroup.Done()
+		}()
+
 	}
+	//waitGroup.Wait()
+	time.Sleep(150 * time.Millisecond)
 	//println(strconv.Itoa(count) + "  " + strconv.Itoa(cntmach))
+
 	if count > cntmach/2 && cntmach > 1 {
 		rf.Convert(2)
 		return
 	} else {
-		//println(strconv.Itoa(rf.me) + "fail to be leader and now leader is" + strconv.Itoa(rf.votedFor))
+		//println(strconv.Itoa(rf.me) + "fail to be leader and now leader is" + strconv.Itoa(rf.votedFor) + "term: " + strconv.Itoa(rf.CurrentTerm))
 		time.Sleep(199 * time.Millisecond)
-		//rf.votedFor = -1
-		rf.Convert(0)
+		rf.mu.Lock()
+		rf.isgetHeart = false
+		rf.state = 1
+		rf.CurrentTerm++
+		rf.votedFor = -1
+		rf.mu.Unlock()
+
+		rf.StartElect()
 		return
 	}
 
