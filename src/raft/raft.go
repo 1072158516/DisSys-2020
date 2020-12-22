@@ -84,12 +84,7 @@ func (rf *Raft) GetState() (int, bool) {
 		leader = true
 
 	}
-	//println("getstate:" + " " + strconv.Itoa(rf.state) + " " + strconv.Itoa(rf.me) +  " " + strconv.Itoa(rf.CurrentTerm))
 
-	if rf.me == 0 {
-		//println("o state: " + strconv.Itoa(rf.state))
-	}
-	// Your code here.
 	return term, leader
 }
 
@@ -238,6 +233,23 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			rf.CurrentTerm = args.Term
 			reply.Term = rf.CurrentTerm
 			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
+			if args.LeaderCommit > rf.commitIndex {
+				println("leader commit: " + strconv.Itoa(args.LeaderCommit))
+				if args.LeaderCommit < len(rf.log)-1 {
+
+					rf.commitIndex = rf.commitIndex + 1
+					rf.SendCommitmss()
+
+				} else {
+					if len(rf.log)-1 > rf.commitIndex {
+						rf.commitIndex = rf.commitIndex + 1
+						rf.SendCommitmss()
+						//println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
+					}
+				}
+
+				println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
+			}
 			rf.mu.Unlock()
 			//println("llllllllll")
 			//go rf.Convert(0)
@@ -250,15 +262,12 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			//println(strconv.Itoa(rf.me) + ": my term change to " + strconv.Itoa(rf.CurrentTerm))
 			nextIndex := 1
 			flag := false
+			rf.mu.Lock()
 			for i := range rf.log {
 				if args.PrevLogIndex == i && rf.log[args.PrevLogIndex].Term == args.PrevLogTerm {
 					nextIndex = args.PrevLogIndex + 1
 					flag = true
-					if rf.me == 0 {
-						println(strconv.Itoa(args.LeaderId) + " previndex " + strconv.Itoa(args.PrevLogIndex))
-						println("nextindex: " + strconv.Itoa(nextIndex))
-						println(args.Term)
-					}
+
 				}
 			}
 			if flag == false {
@@ -269,19 +278,13 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			}
 			//rf.log = append(rf.log[:nextIndex], rf.log[nextIndex+1:]...)
 			rf.log = rf.log[:nextIndex]
-			if rf.me == 0 {
-				for i := range rf.log {
-					print(rf.log[i].Command)
-					print(" ")
-				}
-				println()
-			}
+
 			//if args.PrevLogIndex > len(rf.log)-1 || !(rf.log[args.PrevLogIndex].Term == args.PrevLogTerm) {
 			//reply.Success = false
 			//reply.Term = rf.CurrentTerm
 			//return
 			//}
-			rf.mu.Lock()
+
 			//flag = false
 			for i := range args.Entries {
 				rf.log = append(rf.log, args.Entries[i])
@@ -290,41 +293,31 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 				reply.Term = rf.CurrentTerm
 
 			}
-			rf.mu.Unlock()
+
 			//if flag{
 			//	return
 			//}
 			//println("replymatch: " + strconv.Itoa(reply.Matchindex))
 
-			/*for args.LeaderCommit > rf.commitIndex {
+			if args.LeaderCommit > rf.commitIndex {
 				//println("leader commit: " + strconv.Itoa(args.LeaderCommit))
 				if args.LeaderCommit < len(rf.log)-1 {
-					rf.mu.Lock()
+
 					rf.commitIndex = rf.commitIndex + 1
 					rf.SendCommitmss()
-					rf.mu.Unlock()
+
 				} else {
-					rf.mu.Lock()
-					if rf.commitIndex + 2 == len(rf.log){
-						rf.commitIndex = len(rf.log) - 1
-						rf.SendCommitmss()
-						println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
-						rf.mu.Unlock()
-						break
-					}else{
-						rf.mu.Lock()
+					if len(rf.log)-1 > rf.commitIndex {
 						rf.commitIndex = rf.commitIndex + 1
 						rf.SendCommitmss()
-						rf.mu.Unlock()
+						//println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
 					}
-
-
 				}
 				reply.Success = true
 				reply.Term = rf.CurrentTerm
-				println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
-			}*/
-			//rf.mu.Unlock()
+				//println("sever : no: " + strconv.Itoa(rf.me) + strconv.Itoa(rf.commitIndex))
+			}
+			rf.mu.Unlock()
 
 			//TODO:delect every confilicts
 
@@ -373,12 +366,10 @@ func (rf *Raft) SendCommitmss() {
 		UseSnapshot: false,
 		Snapshot:    nil,
 	}
+
 	if rf.state == 2 {
 		println("leader send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
-		//for i := range rf.log {
-		//println("log: " + strconv.Itoa(rf.log[i].Command))
-		//}
-		//go rf.SendAppendLogs()
+
 	} else {
 		//println("fllower send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
 	}
@@ -413,10 +404,12 @@ func (rf *Raft) SendAppendLogs() {
 			args.Isheart = false
 			rf.mu.Unlock()
 			//println(rf.log[len(rf.log)-1].Command)
-			//println(len(rf.log))
+			//println(rf.nextIndex[i])
 			for j := rf.nextIndex[i]; j < len(rf.log); j++ {
 				//println(strconv.Itoa(j) + " " + strconv.Itoa(len(rf.log)))
+				rf.mu.Lock()
 				args.Entries = append(args.Entries, rf.log[j])
+				rf.mu.Unlock()
 			}
 			reply := &AppendEntriseReply{}
 			reply.Term = -1
@@ -454,8 +447,8 @@ func (rf *Raft) SendAppendLogs() {
 			//TODO:update commitIndex
 		}()
 	}
-	//time.Sleep(time.Millisecond * 50)
-	/*N := rf.commitIndex + 1
+	time.Sleep(time.Millisecond * 100)
+	N := rf.commitIndex + 1
 	count := 0
 	for i := range rf.peers {
 		rf.mu.Lock()
@@ -465,13 +458,16 @@ func (rf *Raft) SendAppendLogs() {
 		}
 		rf.mu.Unlock()
 	}
-	println(strconv.Itoa(count) + "<-count rf.len: "+ strconv.Itoa(len(rf.log)))
+	//println(strconv.Itoa(count) + "<-count rf.len: "+ strconv.Itoa(len(rf.log)))
 	if count >= (len(rf.peers)-1)/2 {
 		rf.mu.Lock()
 		rf.commitIndex = N
 		rf.SendCommitmss()
 		rf.mu.Unlock()
-	}*/
+		//rf.wg.Add(1)
+		//rf.SendAppendLogs()
+	}
+	//rf.wg.Done()
 	//rf.SendCommitmss(rf.commitIndex,rf.log[rf.commitIndex].Command)
 }
 
@@ -502,13 +498,17 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Term:    rf.CurrentTerm,
 		}
 
+		//rf.wg.Wait()
+		//rf.wg.Add(len(rf.peers) - 1)
 		rf.mu.Lock()
+		//for i := range rf.log
 		rf.log = append(rf.log, mylog)
 		rf.mu.Unlock()
 		//go rf.SendAppendLogs()
 
 		//println(rf.log[len(rf.log) - 1].Command)
 		//}
+
 		rf.SendAppendLogs()
 
 	}
@@ -593,7 +593,7 @@ func (rf *Raft) Convert(state int) {
 
 					}()
 				}
-				time.Sleep(time.Millisecond * 200)
+				time.Sleep(time.Millisecond * 50)
 				if count < 1 {
 					rf.Convert(0)
 				}
@@ -627,7 +627,7 @@ func (rf *Raft) Convert(state int) {
 
 			for rf.state == 0 {
 
-				time.Sleep(time.Millisecond * 300)
+				//time.Sleep(time.Millisecond * 300)
 				var timezone = time.Now().UnixNano() / 1000000
 				//println(timezone)
 				//println(rf.timeUnixHeart)
@@ -696,7 +696,7 @@ func (rf *Raft) StartElect() {
 
 	}
 	//waitGroup.Wait()
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	//println(strconv.Itoa(count) + "  " + strconv.Itoa(cntmach))
 
 	if count > cntmach/2 && cntmach > 1 {
