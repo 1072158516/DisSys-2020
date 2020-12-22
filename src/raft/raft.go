@@ -222,6 +222,7 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 		//println("reply term big ")
 	}
 	if args.Term >= rf.CurrentTerm {
+		rf.Convert(0)
 		if args.Isheart {
 
 		} else {
@@ -234,14 +235,23 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 
 			//println(strconv.Itoa(rf.me) + ": my term change to " + strconv.Itoa(rf.CurrentTerm))
 			nextIndex := 1
+			flag := false
 			for i := range rf.log {
 				if args.PrevLogIndex == i && rf.log[args.PrevLogIndex].Term == args.PrevLogTerm {
 					nextIndex = args.PrevLogIndex + 1
+					flag = true
 					if rf.me == 0 {
-						println(strconv.Itoa(args.LeaderId) + "previndex" + strconv.Itoa(args.PrevLogIndex))
+						println(strconv.Itoa(args.LeaderId) + " previndex " + strconv.Itoa(args.PrevLogIndex))
 						println("nextindex: " + strconv.Itoa(nextIndex))
+						println(args.Term)
 					}
 				}
+			}
+			if flag == false {
+				reply.Success = true
+				reply.Term = rf.CurrentTerm
+				reply.Matchindex = -1
+				return
 			}
 			//rf.log = append(rf.log[:nextIndex], rf.log[nextIndex+1:]...)
 			rf.log = rf.log[:nextIndex]
@@ -260,11 +270,11 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			rf.mu.Lock()
 			for i := range args.Entries {
 				rf.log = append(rf.log, args.Entries[i])
-				//println(args.Entries[0].Command)
-				reply.Matchindex = reply.Matchindex + 1
+				println(args.Entries[i].Command)
+				reply.Matchindex = len(rf.log) - 1
 
 			}
-			println("replymatch: " + strconv.Itoa(reply.Matchindex))
+			//println("replymatch: " + strconv.Itoa(reply.Matchindex))
 			rf.mu.Unlock()
 			rf.mu.Lock()
 			for args.LeaderCommit > rf.commitIndex {
@@ -373,7 +383,8 @@ func (rf *Raft) SendCommitmss() {
 func (rf *Raft) SendAppendLogs() {
 
 	for i1 := 0; i1 < len(rf.peers); i1++ {
-		if i1 == rf.me {
+
+		if i1 == rf.me || rf.state != 2 {
 			continue
 		}
 		i := i1
@@ -387,6 +398,12 @@ func (rf *Raft) SendAppendLogs() {
 			args.LeaderCommit = rf.commitIndex
 			//println(i)
 			args.PrevLogIndex = rf.nextIndex[i] - 1
+			if args.PrevLogIndex > len(rf.log)-1 {
+				println("whos preterm: " + strconv.Itoa(rf.me))
+				//println(args.PrevLogTerm)
+				println(args.PrevLogIndex)
+			}
+
 			args.PrevLogTerm = rf.log[args.PrevLogIndex].Term
 			args.Isheart = false
 			rf.mu.Unlock()
@@ -398,14 +415,19 @@ func (rf *Raft) SendAppendLogs() {
 			}
 			reply := &AppendEntriseReply{}
 			reply.Term = -1
-			reply.Matchindex = 0
+			reply.Matchindex = rf.matchIndex[i]
 			//println(reply.Term)
 			if rf.sendAppendEntries(i, *args, reply) {
 				//println(strconv.Itoa(rf.me) + ": my term: " + strconv.Itoa(rf.CurrentTerm) + " reply term from " + strconv.Itoa(i) + " : term " + strconv.Itoa(reply.Term))
 
 				if reply.Success {
 					//println("heard reply from " + strconv.Itoa(i))
-
+					if reply.Matchindex == -1 {
+						rf.mu.Lock()
+						rf.nextIndex[i] = rf.nextIndex[i] - 1
+						rf.mu.Unlock()
+						return
+					}
 					//println(rf.matchIndex[i])
 				}
 				if reply.Term > rf.CurrentTerm {
@@ -418,7 +440,7 @@ func (rf *Raft) SendAppendLogs() {
 				}
 				//time.Sleep(time.Millisecond*50)
 				rf.mu.Lock()
-				rf.matchIndex[i] = reply.Matchindex + rf.matchIndex[i]
+				rf.matchIndex[i] = reply.Matchindex
 				rf.nextIndex[i] = rf.matchIndex[i] + 1
 				rf.mu.Unlock()
 
@@ -537,17 +559,20 @@ func (rf *Raft) Convert(state int) {
 		go func() {
 			rf.rb = make(chan bool)
 			//time.Sleep(time.Millisecond * 400)
+			if rf.state == 2 {
+				rf.SendAppendLogs()
+			}
 			for rf.state == 2 {
 
 				//println(strconv.Itoa(rf.me)+"rf.state = " + strconv.Itoa(rf.state))
-				if rf.state == 2 {
-					rf.SendAppendLogs()
-				}
 
 				if rf.state != 2 {
 					break
 				}
 				time.Sleep(time.Millisecond * 400)
+				if rf.state == 2 {
+					rf.SendAppendLogs()
+				}
 			}
 
 		}()
@@ -647,7 +672,7 @@ func (rf *Raft) StartElect() {
 		return
 	} else {
 		//println(strconv.Itoa(rf.me) + "fail to be leader and now leader is" + strconv.Itoa(rf.votedFor))
-		//time.Sleep(399 * time.Millisecond)
+		time.Sleep(199 * time.Millisecond)
 		//rf.votedFor = -1
 		rf.Convert(0)
 		return
