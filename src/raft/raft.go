@@ -294,6 +294,7 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			return
 		} else {
 			reply.Success = true
+
 			//rf.CurrentTerm = args.Term
 			//println(args.Entries[len(args.Entries) - 1].Command)
 
