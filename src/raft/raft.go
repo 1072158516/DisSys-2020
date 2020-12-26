@@ -97,15 +97,24 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here.
 	// Example:
+	//rf.mu.Lock()
+
 	w := new(bytes.Buffer)
 	e := gob.NewEncoder(w)
 	_ = e.Encode(rf.CurrentTerm)
 	_ = e.Encode(rf.votedFor)
+	_ = e.Encode(rf.state)
+	_ = e.Encode(rf.timeUnixHeart)
+	_ = e.Encode(rf.isgetHeart)
 	_ = e.Encode(rf.log)
+	_ = e.Encode(rf.logBuf)
 	_ = e.Encode(rf.commitIndex)
 	_ = e.Encode(rf.lastApplied)
 	_ = e.Encode(rf.nextIndex)
 	_ = e.Encode(rf.matchIndex)
+	_ = e.Encode(rf.log)
+	//rf.mu.Unlock()
+	//println("persist " +  strconv.Itoa(w.Len()))
 	data := w.Bytes()
 	rf.persister.SaveRaftState(data)
 }
@@ -116,9 +125,30 @@ func (rf *Raft) persist() {
 func (rf *Raft) readPersist(data []byte) {
 	// Your code here.
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := gob.NewDecoder(r)
-	// d.Decode(&rf.xxx)
+
+	r := bytes.NewBuffer(data)
+	d := gob.NewDecoder(r)
+
+	_ = d.Decode(&rf.CurrentTerm)
+	_ = d.Decode(&rf.votedFor)
+	_ = d.Decode(&rf.state)
+	_ = d.Decode(&rf.timeUnixHeart)
+	_ = d.Decode(&rf.isgetHeart)
+	_ = d.Decode(&rf.log)
+	_ = d.Decode(&rf.logBuf)
+	_ = d.Decode(&rf.commitIndex)
+	_ = d.Decode(&rf.lastApplied)
+	_ = d.Decode(&rf.nextIndex)
+	_ = d.Decode(&rf.matchIndex)
+	_ = d.Decode(&rf.log)
+	if rf.CurrentTerm > 0 {
+		rf.isgetHeart = false
+		rf.Convert(rf.state)
+	}
+	//rf.isgetHeart = false
+	//rf.Convert(rf.state)
+
+	println(rf.state)
 	// d.Decode(&rf.yyy)
 }
 
@@ -374,6 +404,7 @@ func (rf *Raft) SendCommitmss() {
 		UseSnapshot: false,
 		Snapshot:    nil,
 	}
+	rf.persist()
 
 	if rf.me == 0 {
 		//println("0 send " + strconv.Itoa(rf.log[rf.commitIndex].Command) + "index: " + strconv.Itoa(rf.commitIndex))
