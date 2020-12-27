@@ -74,7 +74,7 @@ type Raft struct {
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
-
+	rf.mu.Lock()
 	var term int
 	term = rf.CurrentTerm
 	var leader bool
@@ -85,6 +85,7 @@ func (rf *Raft) GetState() (int, bool) {
 		leader = true
 
 	}
+	rf.mu.Unlock()
 
 	return term, leader
 }
@@ -128,7 +129,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 	r := bytes.NewBuffer(data)
 	d := gob.NewDecoder(r)
-
+	rf.mu.Lock()
 	_ = d.Decode(&rf.CurrentTerm)
 	_ = d.Decode(&rf.votedFor)
 	_ = d.Decode(&rf.state)
@@ -141,14 +142,19 @@ func (rf *Raft) readPersist(data []byte) {
 	_ = d.Decode(&rf.nextIndex)
 	_ = d.Decode(&rf.matchIndex)
 	_ = d.Decode(&rf.log)
+	rf.mu.Unlock()
+	println(rf.CurrentTerm)
 	if rf.CurrentTerm > 0 {
+		//println(rf.commitIndex)
 		rf.isgetHeart = false
-		rf.Convert(rf.state)
+		rf.state = 0
+		rf.Convert(0)
 	}
+
 	//rf.isgetHeart = false
 	//rf.Convert(rf.state)
 
-	println(rf.state)
+	//println(rf.state)
 	// d.Decode(&rf.yyy)
 }
 
@@ -225,12 +231,17 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 			reply.VoteGranted = false
 			reply.Term = rf.CurrentTerm
 			return
-		} else {
-
+		} else if args.LastLogIndex == rf.commitIndex {
+			if args.LastLogTerm != rf.log[rf.commitIndex].Term {
+				reply.VoteGranted = false
+				reply.Term = rf.CurrentTerm
+				return
+			}
 		}
 		if args.Term > rf.CurrentTerm {
 
 			reply.VoteGranted = true
+			//rf.Convert(0)
 			rf.mu.Lock()
 			rf.CurrentTerm = args.Term
 			//println("im in" + strconv.Itoa(rf.CurrentTerm))
@@ -273,7 +284,8 @@ func (rf *Raft) AppendEntries(args AppendEntriseArgs, reply *AppendEntriseReply)
 			rf.CurrentTerm = args.Term
 			reply.Term = rf.CurrentTerm
 			rf.timeUnixHeart = time.Now().UnixNano() / 1000000
-			//println("leader's commit: " + strconv.Itoa(args.LeaderCommit) + "my match :" + strconv.Itoa(reply.Matchindex))
+
+			//println("leader's commit: " + strconv.Itoa(args.LeaderCommit) + " me: " + strconv.Itoa(rf.me)+" match :" + strconv.Itoa(len(rf.log)))
 			if args.LeaderCommit > rf.commitIndex && args.MatchIndex > rf.commitIndex {
 				//println("leader's commit: " + strconv.Itoa(args.LeaderCommit) + "my commit :" + strconv.Itoa(rf.commitIndex))
 				//println("sever: " + strconv.Itoa(rf.me) + "my loglen: " + strconv.Itoa(len(rf.log)))
@@ -407,8 +419,8 @@ func (rf *Raft) SendCommitmss() {
 	}
 	rf.persist()
 
-	if rf.me == 0 {
-		//println("0 send " + strconv.Itoa(rf.log[rf.commitIndex].Command) + "index: " + strconv.Itoa(rf.commitIndex))
+	if true {
+		println(strconv.Itoa(rf.me) + " send " + strconv.Itoa(rf.log[rf.commitIndex].Command) + " index: " + strconv.Itoa(rf.commitIndex))
 
 	} else {
 		//println("fllower send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
@@ -476,6 +488,7 @@ func (rf *Raft) SendAppendLogs() {
 						rf.SendAppendLogs()
 						return
 					}
+
 					//println(rf.matchIndex[i])
 				}
 				if reply.Term > rf.CurrentTerm {
@@ -503,7 +516,7 @@ func (rf *Raft) SendAppendLogs() {
 	for i := range rf.peers {
 		rf.mu.Lock()
 		if rf.matchIndex[i] >= N && i != rf.me {
-			//println(strconv.Itoa(i) + "<-server match:" + strconv.Itoa(rf.matchIndex[i]))
+			println(strconv.Itoa(i) + "<-server match:" + strconv.Itoa(rf.matchIndex[i]))
 			count++
 
 		}
@@ -603,7 +616,7 @@ func (rf *Raft) SendAppend(i int, count *int) {
 	if rf.sendAppendEntries(i, *args, reply) {
 
 		if reply.Success {
-
+			*count++
 		}
 		if reply.Term > rf.CurrentTerm {
 			rf.mu.Lock()
@@ -612,7 +625,7 @@ func (rf *Raft) SendAppend(i int, count *int) {
 			rf.Convert(0)
 			return
 		}
-		*count++
+
 	}
 }
 func (rf *Raft) Convert(state int) {
@@ -635,7 +648,8 @@ func (rf *Raft) Convert(state int) {
 
 		}
 		rf.mu.Unlock()
-		//println(strconv.Itoa(rf.me) + ": im leader")
+		println(strconv.Itoa(rf.me) + ": im leader, term: " + strconv.Itoa(rf.CurrentTerm))
+		rf.SendAppendLogs()
 		go func() {
 
 			//time.Sleep(time.Millisecond * 400)
@@ -662,11 +676,14 @@ func (rf *Raft) Convert(state int) {
 					rf.SendAppendLogs()
 				}
 				time.Sleep(time.Millisecond * 50)
+
+				//rf.SendAppendLogs()
 				if *count < 1 {
 
 					time.Sleep(time.Millisecond * 1000)
 					rf.Convert(0)
 				}
+
 			}
 
 		}()
@@ -697,7 +714,7 @@ func (rf *Raft) Convert(state int) {
 
 			for rf.state == 0 {
 
-				//time.Sleep(time.Millisecond * 300)
+				time.Sleep(time.Millisecond * 20)
 				var timezone = time.Now().UnixNano() / 1000000
 				//println(timezone)
 				//println(rf.timeUnixHeart)
@@ -842,17 +859,16 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	//println(me)   //0,1,2 have three server and the make is to every one
 	//print(len(peers))
-
+	rf.readPersist(persister.ReadRaftState())
 	go func() {
 		time.Sleep(time.Millisecond * (100 * time.Duration(me+1)))
-		if rf.votedFor == -1 {
+		if rf.votedFor == -1 && rf.CurrentTerm == 0 {
 			rf.Convert(1)
 		}
 
 	}()
 
 	// initialize from state persisted before a crash
-	rf.readPersist(persister.ReadRaftState())
 
 	return rf
 }
