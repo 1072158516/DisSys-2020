@@ -143,7 +143,7 @@ func (rf *Raft) readPersist(data []byte) {
 	_ = d.Decode(&rf.matchIndex)
 	_ = d.Decode(&rf.log)
 	rf.mu.Unlock()
-	println(rf.CurrentTerm)
+	//println(rf.CurrentTerm)
 	if rf.CurrentTerm > 0 {
 		//println(rf.commitIndex)
 		rf.isgetHeart = false
@@ -184,6 +184,7 @@ type RequestVoteReply struct {
 
 	Term        int
 	VoteGranted bool
+	Concurrent  bool
 }
 
 //
@@ -225,16 +226,20 @@ func (rf *Raft) RequestVote(args RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = false
 	}
 	if args.Term >= rf.CurrentTerm {
-		//println(strconv.Itoa(args.LastLogIndex) + " " + strconv.Itoa(args.LastLogTerm) + "vote for")
-		//println(rf.votedFor)
+		//println(strconv.Itoa(args.LastLogIndex) + " " + strconv.Itoa(rf.commitIndex) + "vote for")
+		//println(rf.me)
+		reply.Concurrent = true
 		if args.LastLogIndex < rf.commitIndex {
+			//println("ccccccc")
 			reply.VoteGranted = false
 			reply.Term = rf.CurrentTerm
+			reply.Concurrent = false
 			return
 		} else if args.LastLogIndex == rf.commitIndex {
 			if args.LastLogTerm != rf.log[rf.commitIndex].Term {
 				reply.VoteGranted = false
 				reply.Term = rf.CurrentTerm
+				reply.Concurrent = false
 				return
 			}
 		}
@@ -420,7 +425,7 @@ func (rf *Raft) SendCommitmss() {
 	rf.persist()
 
 	if true {
-		println(strconv.Itoa(rf.me) + " send " + strconv.Itoa(rf.log[rf.commitIndex].Command) + " index: " + strconv.Itoa(rf.commitIndex))
+		//println(strconv.Itoa(rf.me) + " send " + strconv.Itoa(rf.log[rf.commitIndex].Command) + " index: " + strconv.Itoa(rf.commitIndex))
 
 	} else {
 		//println("fllower send " + strconv.Itoa(rf.log[rf.commitIndex].Command))
@@ -516,7 +521,7 @@ func (rf *Raft) SendAppendLogs() {
 	for i := range rf.peers {
 		rf.mu.Lock()
 		if rf.matchIndex[i] >= N && i != rf.me {
-			println(strconv.Itoa(i) + "<-server match:" + strconv.Itoa(rf.matchIndex[i]))
+			//println(strconv.Itoa(i) + "<-server match:" + strconv.Itoa(rf.matchIndex[i]))
 			count++
 
 		}
@@ -648,7 +653,7 @@ func (rf *Raft) Convert(state int) {
 
 		}
 		rf.mu.Unlock()
-		println(strconv.Itoa(rf.me) + ": im leader, term: " + strconv.Itoa(rf.CurrentTerm))
+		//println(strconv.Itoa(rf.me) + ": im leader, term: " + strconv.Itoa(rf.CurrentTerm))
 		rf.SendAppendLogs()
 		go func() {
 
@@ -750,7 +755,7 @@ func (rf *Raft) StartElect() {
 	rf.mu.Lock()
 	args.Term = rf.CurrentTerm
 	args.CandidateId = rf.me
-	args.LastLogIndex = rf.commitIndex
+	args.LastLogIndex = len(rf.log) - 1
 	args.LastLogTerm = rf.log[args.LastLogIndex].Term
 	rf.mu.Unlock()
 	//waitGroup := sync.WaitGroup{}
@@ -762,11 +767,12 @@ func (rf *Raft) StartElect() {
 			reply := new(RequestVoteReply)
 			reply.Term = -1
 			reply.VoteGranted = false
+			reply.Concurrent = true
 			//rf.sendRequestVote(i, *args, reply)
 			ok := rf.sendRequestVote(i, *args, reply)
 			{
 
-				if ok {
+				if ok && reply.Concurrent {
 					cntmach++
 				}
 
@@ -775,6 +781,7 @@ func (rf *Raft) StartElect() {
 					count++
 					//println("get vote from " + strconv.Itoa(i) + "his term " + strconv.Itoa(reply.Term))
 				}
+
 				if reply.Term > rf.CurrentTerm {
 					//println("convert to 0")
 					rf.CurrentTerm = reply.Term
@@ -791,13 +798,13 @@ func (rf *Raft) StartElect() {
 	time.Sleep(50 * time.Millisecond)
 	//println(strconv.Itoa(count) + "  " + strconv.Itoa(cntmach))
 
-	if count > cntmach/2 && cntmach > 1 {
+	if count > len(rf.peers)/2 {
 		rf.Convert(2)
 		return
 	} else {
 		//println(strconv.Itoa(rf.me) + "fail to be leader and now leader is" + strconv.Itoa(rf.votedFor) + "term: " + strconv.Itoa(rf.CurrentTerm))
 		if cntmach == 1 || cntmach == 0 {
-			time.Sleep(3000 * time.Millisecond)
+			time.Sleep(1000 * time.Millisecond)
 		}
 		time.Sleep(199 * time.Millisecond)
 		rf.Convert(0)
